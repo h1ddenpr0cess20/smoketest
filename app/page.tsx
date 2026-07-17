@@ -194,6 +194,8 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [modelStatus, setModelStatus] = useState("");
+  const [modelsRefresh, setModelsRefresh] = useState(0);
+  const discoverSeq = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -308,25 +310,48 @@ export default function Home() {
     }));
   }
 
-  async function discoverModels() {
-    setModelStatus("Checking connection…");
-    setModels([]);
-    try {
-      const response = await fetch("/api/models", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, apiKey: currentSettings.apiKey }),
-      });
-      const body = (await response.json()) as { models?: string[]; error?: string };
-      if (!response.ok) throw new Error(body.error || "Connection failed");
-      const available = body.models ?? [];
-      setModels(available);
-      setModelStatus(available.length ? `${available.length} models available` : "Connected — no models reported");
-      if (!currentSettings.model && available[0]) updateProviderSettings({ model: available[0] });
-    } catch (error) {
-      setModelStatus(error instanceof Error ? error.message : "Connection failed");
+  // Discover models at runtime — on load, on provider switch, and when the API
+  // key changes — instead of only behind the manual button. Debounced so key
+  // typing doesn't fire a request per keystroke; a sequence counter drops
+  // out-of-order responses when the provider changes mid-flight.
+  const currentApiKey = currentSettings.apiKey;
+  useEffect(() => {
+    if (!hydrated) return;
+    if (PROVIDERS[provider].apiKeyRequired && !currentApiKey.trim()) {
+      setModels([]);
+      setModelStatus("Add an API key to load models");
+      return;
     }
-  }
+    const seq = ++discoverSeq.current;
+    const timer = setTimeout(async () => {
+      setModelStatus("Checking connection…");
+      try {
+        const response = await fetch("/api/models", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider, apiKey: currentApiKey }),
+        });
+        const body = (await response.json()) as { models?: string[]; error?: string };
+        if (discoverSeq.current !== seq) return;
+        if (!response.ok) throw new Error(body.error || "Connection failed");
+        const available = body.models ?? [];
+        setModels(available);
+        setModelStatus(available.length ? `${available.length} models available` : "Connected — no models reported");
+        if (available[0]) {
+          setSettings((current) =>
+            current[provider].model
+              ? current
+              : { ...current, [provider]: { ...current[provider], model: available[0] } },
+          );
+        }
+      } catch (error) {
+        if (discoverSeq.current !== seq) return;
+        setModels([]);
+        setModelStatus(error instanceof Error ? error.message : "Connection failed");
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [provider, currentApiKey, hydrated, modelsRefresh]);
 
   async function onFiles(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
@@ -680,7 +705,7 @@ export default function Home() {
               </label>
             </div>
             <div className="connection-row">
-              <button className="test-button" onClick={() => void discoverModels()}><Icon name="refresh" size={15} /> Test & discover models</button>
+              <button className="test-button" onClick={() => setModelsRefresh((count) => count + 1)}><Icon name="refresh" size={15} /> Refresh models</button>
               <p className={modelStatus.toLowerCase().includes("could not") || modelStatus.toLowerCase().includes("failed") || modelStatus.toLowerCase().includes("requires") ? "bad" : ""}>{modelStatus}</p>
             </div>
             <div className="settings-note"><span>i</span><p><strong>Responses API only.</strong> smoketest sends the same <code>/v1/responses</code> request shape to every provider. Chat Completions and provider-specific SDKs are intentionally excluded.</p></div>
