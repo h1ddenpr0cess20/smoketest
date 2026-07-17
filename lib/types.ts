@@ -9,6 +9,13 @@ export type Attachment = {
   size: number;
 };
 
+// A retained previous version of a regenerated assistant reply.
+export type MessageVariant = {
+  content: string;
+  model?: string;
+  provider?: ProviderId;
+};
+
 export type Message = {
   id: string;
   role: "user" | "assistant";
@@ -20,6 +27,8 @@ export type Message = {
   attachments?: Attachment[];
   error?: boolean;
   planState?: "proposed" | "approved" | "changes_requested";
+  variants?: MessageVariant[];
+  variantIndex?: number;
 };
 
 export type Thread = {

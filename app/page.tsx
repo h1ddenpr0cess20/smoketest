@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, Children, FormEvent, isValidElement, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -14,7 +14,8 @@ import {
 } from "@/lib/stream";
 import { PROVIDERS, PROVIDER_IDS, type ProviderId } from "@/lib/providers";
 import { parseCommand } from "@/lib/commands";
-import type { Attachment, Message, Mode, ProviderSettings, Thread } from "@/lib/types";
+import type { Attachment, Message, MessageVariant, Mode, ProviderSettings, Thread } from "@/lib/types";
+import { EXPORT_FORMATS, exportFilename, exportMime, renderExport, type ExportFormatKey } from "@/lib/export";
 
 const STORAGE = {
   threads: "smoketest.threads.v1",
@@ -130,18 +131,117 @@ const CONTEXT_GUARDRAIL =
 // The Responses API accepts a role-tagged message array for `input`; sending
 // real roles instead of a flattened "USER:/ASSISTANT:" string preserves the
 // turn structure models are trained on.
-function buildInput(messages: Message[], next: string, attachments: Attachment[]) {
-  const history = messages
+function toInputMessages(messages: Message[]) {
+  return messages
     .filter((message) => message.content.trim() && !message.error)
     .map((message) => ({ role: message.role, content: message.content }));
+}
+
+function buildInput(messages: Message[], next: string, attachments: Attachment[]) {
   const files = attachments
     .map((file) => `--- ${file.name} ---\n${file.content}\n--- end ${file.name} ---`)
     .join("\n\n");
   const content = files ? `ATTACHED CODE CONTEXT (read-only):\n${files}\n\n${next}` : next;
-  return [...history, { role: "user" as const, content }];
+  return [...toInputMessages(messages), { role: "user" as const, content }];
 }
 
-function Icon({ name, size = 18 }: { name: "plus" | "settings" | "paperclip" | "send" | "stop" | "menu" | "trash" | "refresh" | "close"; size?: number }) {
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const node = document.createElement("textarea");
+    node.value = text;
+    document.body.appendChild(node);
+    node.select();
+    document.execCommand("copy");
+    node.remove();
+  }
+}
+
+type StreamPayload = {
+  provider: ProviderId;
+  apiKey: string;
+  model: string;
+  input: Array<{ role: "user" | "assistant"; content: string }>;
+  instructions: string;
+  reasoningEffort: string;
+};
+type StreamOutcome = { text: string; error?: string };
+
+// Streams one assistant turn through the local proxy, shared by send and
+// regenerate. Never throws: an abort surfaces as a plain partial result (the
+// caller checks its own signal) and failures come back in `error` alongside
+// any partial text. UI updates are throttled to ~12/s — rendering every SSE
+// delta re-parses the conversation's markdown and locked up the browser.
+async function streamAssistant(
+  payload: StreamPayload,
+  signal: AbortSignal,
+  onUpdate: (text: string) => void,
+): Promise<StreamOutcome> {
+  let streamed = "";
+  let lastFlush = 0;
+  const push = () => {
+    const now = Date.now();
+    if (now - lastFlush < 80) return;
+    lastFlush = now;
+    onUpdate(streamed);
+  };
+  try {
+    const response = await fetch("/api/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal,
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      return { text: "", error: body.error || `${PROVIDERS[payload.provider].name} returned ${response.status}.` };
+    }
+    if ((response.headers.get("content-type") || "").includes("application/json")) {
+      return { text: outputTextFromJson((await response.json()) as unknown) };
+    }
+    if (!response.body) return { text: "", error: "The provider returned an empty stream." };
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalText = "";
+    let truncatedReason = "";
+    const handleEvent = (event: ReturnType<typeof parseSseBlock>) => {
+      if (!event) return;
+      if (isErrorEvent(event)) {
+        throw new Error(eventErrorMessage(event) || "The provider failed while generating.");
+      }
+      const fromFinal = finalResponseText(event);
+      if (fromFinal) finalText = fromFinal;
+      const reason = incompleteReason(event);
+      if (reason) truncatedReason = reason;
+      const delta = eventText(event);
+      if (delta) {
+        streamed += delta;
+        push();
+      }
+    };
+    while (true) {
+      const { done, value: chunk } = await reader.read();
+      buffer += decoder.decode(chunk, { stream: !done });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? "";
+      for (const block of blocks) handleEvent(parseSseBlock(block));
+      if (done) break;
+    }
+    if (buffer.trim()) handleEvent(parseSseBlock(buffer));
+    // Some providers only deliver text in the final response payload.
+    if (!streamed && finalText) streamed = finalText;
+    if (truncatedReason) streamed += `${streamed ? "\n\n" : ""}_Response incomplete (${truncatedReason})._`;
+    return { text: streamed };
+  } catch (error) {
+    if (signal.aborted) return { text: streamed };
+    return { text: streamed, error: error instanceof Error ? error.message : "Something went wrong." };
+  }
+}
+
+function Icon({ name, size = 18 }: { name: "plus" | "settings" | "paperclip" | "send" | "stop" | "menu" | "trash" | "refresh" | "close" | "copy" | "branch" | "download"; size?: number }) {
   const paths: Record<typeof name, React.ReactNode> = {
     plus: <><path d="M12 5v14M5 12h14" /></>,
     settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></>,
@@ -152,8 +252,116 @@ function Icon({ name, size = 18 }: { name: "plus" | "settings" | "paperclip" | "
     trash: <><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6" /></>,
     refresh: <><path d="M20 7v5h-5" /><path d="M19 12a7 7 0 1 0-2 5" /></>,
     close: <><path d="m6 6 12 12M18 6 6 18" /></>,
+    copy: <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></>,
+    branch: <><path d="M6 3v12" /><circle cx="18" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><path d="M18 9a9 9 0 0 1-9 9" /></>,
+    download: <><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>,
   };
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
+}
+
+// Fenced code blocks get a toolbar with the language label and a copy button,
+// ported from brainworm's CodeBlock.
+function codeLanguage(children: React.ReactNode): string | null {
+  for (const child of Children.toArray(children)) {
+    if (!isValidElement<{ className?: string }>(child)) continue;
+    const languageClass = child.props.className
+      ?.split(/\s+/)
+      .find((className) => className.startsWith("language-"));
+    if (languageClass) return languageClass.slice("language-".length);
+  }
+  return null;
+}
+
+function CodeBlock({ children, ...props }: React.ComponentPropsWithoutRef<"pre">) {
+  const [copied, setCopied] = useState(false);
+  const codeRef = useRef<HTMLPreElement>(null);
+  const language = codeLanguage(children);
+
+  const copy = async () => {
+    await copyText(codeRef.current?.textContent ?? "");
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  };
+
+  return (
+    <div className="code-block">
+      <div className="code-toolbar">
+        <span>{language ?? "code"}</span>
+        <button type="button" onClick={() => void copy()} aria-label="Copy code">
+          <Icon name="copy" size={12} /> {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <pre {...props} ref={codeRef}>{children}</pre>
+    </div>
+  );
+}
+
+// Topbar control that downloads the active session in a chosen format,
+// ported from brainworm's ExportMenu.
+function ExportMenu({ thread }: { thread?: Thread }) {
+  const [open, setOpen] = useState(false);
+  const [format, setFormat] = useState<ExportFormatKey>("md");
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const hasMessages = Boolean(thread?.messages.some((message) => message.content.trim()));
+
+  const onExport = () => {
+    if (!thread) return;
+    const blob = new Blob([renderExport(thread, format)], { type: `${exportMime(format)};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = exportFilename(thread, format);
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setOpen(false);
+  };
+
+  return (
+    <div className="export-menu" ref={rootRef}>
+      <button
+        type="button"
+        className="icon-button"
+        title="Export this session"
+        aria-label="Export this session"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={!hasMessages}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Icon name="download" size={17} />
+      </button>
+      {open && (
+        <div className="export-panel" role="menu">
+          <span className="export-label">EXPORT AS</span>
+          <div className="export-formats">
+            {EXPORT_FORMATS.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                role="menuitemradio"
+                aria-checked={format === item.key}
+                className={format === item.key ? "on" : ""}
+                onClick={() => setFormat(item.key)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="export-go" onClick={onExport}>Download .{format}</button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Memoized so a streaming update to one message doesn't re-render (and
@@ -164,13 +372,27 @@ const MessageView = memo(function MessageView({
   busy,
   onApprovePlan,
   onRevisePlan,
+  onRegenerate,
+  onBranch,
+  onSelectVariant,
 }: {
   message: Message;
   fallbackProvider: ProviderId;
   busy: boolean;
   onApprovePlan: (messageId: string) => void;
   onRevisePlan: (messageId: string) => void;
+  onRegenerate: (messageId: string) => void;
+  onBranch: (messageId: string) => void;
+  onSelectVariant: (messageId: string, index: number) => void;
 }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    await copyText(message.content);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  };
+  const variantCount = message.variants?.length ?? 0;
+  const variantIndex = message.variantIndex ?? 0;
   const messageProvider = PROVIDERS[message.provider ?? fallbackProvider] ?? PROVIDERS[fallbackProvider];
   return (
     <article className={`message ${message.role} ${message.error ? "message-error" : ""}`}>
@@ -188,10 +410,28 @@ const MessageView = memo(function MessageView({
           <div className="message-files">{message.attachments.map((file) => <span key={file.id}>⌘ {file.name}</span>)}</div>
         ) : null}
         {message.content ? (
-          <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div>
+          <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: CodeBlock }}>{message.content}</ReactMarkdown></div>
         ) : (
           <div className="thinking"><span /><span /><span /><small>reading the smoke</small></div>
         )}
+        {message.content ? (
+          <div className="message-actions">
+            <button onClick={() => void copy()} aria-label="Copy message"><Icon name="copy" size={13} /> {copied ? "Copied" : "Copy"}</button>
+            {message.role === "assistant" && (
+              <>
+                <button onClick={() => onRegenerate(message.id)} disabled={busy} aria-label="Regenerate reply"><Icon name="refresh" size={13} /> Regenerate</button>
+                <button onClick={() => onBranch(message.id)} disabled={busy} aria-label="Branch session from here"><Icon name="branch" size={13} /> Branch</button>
+                {variantCount > 1 && (
+                  <span className="message-versions" aria-label={`Reply version ${variantIndex + 1} of ${variantCount}`}>
+                    <button disabled={busy || variantIndex <= 0} onClick={() => onSelectVariant(message.id, variantIndex - 1)} aria-label="Previous reply version">‹</button>
+                    <span>{variantIndex + 1}/{variantCount}</span>
+                    <button disabled={busy || variantIndex >= variantCount - 1} onClick={() => onSelectVariant(message.id, variantIndex + 1)} aria-label="Next reply version">›</button>
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+        ) : null}
         {message.role === "assistant" && message.mode === "plan" && message.planState && !message.error && message.content ? (
           <div className="plan-actions" aria-label="Plan approval">
             {message.planState === "proposed" ? (
@@ -521,92 +761,93 @@ export default function Home() {
     autoScrollRef.current = true;
     const controller = new AbortController();
     abortRef.current = controller;
-    let streamedOutput = "";
-    let lastFlush = 0;
-    // Rendering every SSE delta re-parses the whole conversation's markdown and
-    // re-renders the tree; at provider token rates that locked up the browser.
-    // Cap UI updates to ~12/s and force a final flush when the stream settles.
-    const flush = (force = false) => {
-      const now = Date.now();
-      if (!force && now - lastFlush < 80) return;
-      lastFlush = now;
-      patchMessage(threadId, assistantId, { content: streamedOutput });
-    };
-
     try {
-      const response = await fetch("/api/responses", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify({
+      const outcome = await streamAssistant(
+        {
           provider,
           apiKey: currentSettings.apiKey,
           model: currentSettings.model,
           input: requestInput,
           instructions: `${MODE_COPY[activeMode].instructions}\n\n${CONTEXT_GUARDRAIL}`,
           reasoningEffort: reasoning,
-        }),
-      });
-      const contentType = response.headers.get("content-type") || "";
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error || `${currentProvider.name} returned ${response.status}.`);
-      }
-
-      if (contentType.includes("application/json")) {
-        const body = (await response.json()) as unknown;
-        const text = outputTextFromJson(body);
-        patchMessage(threadId, assistantId, { content: text || "The provider returned no text output." });
-      } else {
-        if (!response.body) throw new Error("The provider returned an empty stream.");
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let finalText = "";
-        let truncatedReason = "";
-        const handleEvent = (event: ReturnType<typeof parseSseBlock>) => {
-          if (!event) return;
-          if (isErrorEvent(event)) {
-            throw new Error(eventErrorMessage(event) || "The provider failed while generating.");
-          }
-          const fromFinal = finalResponseText(event);
-          if (fromFinal) finalText = fromFinal;
-          const reason = incompleteReason(event);
-          if (reason) truncatedReason = reason;
-          const delta = eventText(event);
-          if (delta) {
-            streamedOutput += delta;
-            flush();
-          }
-        };
-        while (true) {
-          const { done, value: chunk } = await reader.read();
-          buffer += decoder.decode(chunk, { stream: !done });
-          const blocks = buffer.split(/\r?\n\r?\n/);
-          buffer = blocks.pop() ?? "";
-          for (const block of blocks) handleEvent(parseSseBlock(block));
-          if (done) break;
-        }
-        if (buffer.trim()) handleEvent(parseSseBlock(buffer));
-        // Some providers only deliver text in the final response payload.
-        if (!streamedOutput && finalText) streamedOutput = finalText;
-        if (truncatedReason) {
-          streamedOutput += `${streamedOutput ? "\n\n" : ""}_Response incomplete (${truncatedReason})._`;
-        }
-        if (streamedOutput) flush(true);
-        else patchMessage(threadId, assistantId, { content: "The provider completed without text output." });
-      }
-    } catch (error) {
+        },
+        controller.signal,
+        (text) => patchMessage(threadId, assistantId, { content: text }),
+      );
       if (controller.signal.aborted) {
         // Keep whatever streamed before the stop, including the throttled tail.
         patchMessage(threadId, assistantId, {
-          content: streamedOutput ? `${streamedOutput}\n\n_Generation stopped._` : "Generation stopped.",
+          content: outcome.text ? `${outcome.text}\n\n_Generation stopped._` : "Generation stopped.",
+        });
+      } else if (outcome.error) {
+        patchMessage(threadId, assistantId, {
+          content: outcome.text ? `${outcome.text}\n\n${outcome.error}` : outcome.error,
+          error: true,
         });
       } else {
-        const message = error instanceof Error ? error.message : "Something went wrong.";
-        patchMessage(threadId, assistantId, {
-          content: streamedOutput ? `${streamedOutput}\n\n${message}` : message,
-          error: true,
+        patchMessage(threadId, assistantId, { content: outcome.text || "The provider completed without text output." });
+      }
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
+    }
+  }
+
+  // Regeneration ported from brainworm: the current reply is snapshotted as a
+  // variant, the turn is re-run against the history before this message, and
+  // the new reply is appended as another variant behind the ‹ › switcher. On
+  // stop or failure the previous reply is restored.
+  async function regenerate(messageId: string) {
+    if (streaming || !activeThread) return;
+    const threadId = activeThread.id;
+    const index = activeThread.messages.findIndex((message) => message.id === messageId);
+    const target = activeThread.messages[index];
+    if (!target || target.role !== "assistant") return;
+    if (!currentSettings.model.trim() || (currentProvider.apiKeyRequired && !currentSettings.apiKey.trim())) {
+      setSettingsOpen(true);
+      return;
+    }
+    const input = toInputMessages(activeThread.messages.slice(0, index));
+    if (!input.length) return;
+
+    const snapshot: MessageVariant = { content: target.content, model: target.model, provider: target.provider };
+    const variants = target.variants?.length ? [...target.variants] : [snapshot];
+    const requestMode = target.mode ?? mode;
+
+    patchMessage(threadId, messageId, { content: "", error: false, planState: undefined });
+    setStreaming(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      const outcome = await streamAssistant(
+        {
+          provider,
+          apiKey: currentSettings.apiKey,
+          model: currentSettings.model,
+          input,
+          instructions: `${MODE_COPY[requestMode].instructions}\n\n${CONTEXT_GUARDRAIL}`,
+          reasoningEffort: reasoning,
+        },
+        controller.signal,
+        (text) => patchMessage(threadId, messageId, { content: text }),
+      );
+      if (controller.signal.aborted || outcome.error) {
+        patchMessage(threadId, messageId, {
+          content: snapshot.content,
+          model: snapshot.model,
+          provider: snapshot.provider,
+        });
+        if (outcome.error) appendNotice(outcome.error);
+      } else {
+        const content = outcome.text || "The provider completed without text output.";
+        const variant: MessageVariant = { content, model: currentSettings.model, provider };
+        patchMessage(threadId, messageId, {
+          content,
+          model: currentSettings.model,
+          provider,
+          variants: [...variants, variant],
+          variantIndex: variants.length,
+          planState: requestMode === "plan" ? "proposed" : undefined,
         });
       }
     } finally {
@@ -615,34 +856,89 @@ export default function Home() {
     }
   }
 
-  // Plan approval flow ported from brainworm: approving flips to Build and
-  // auto-sends the implementation request; requesting changes stays in Plan.
-  // Routed through a ref so the callbacks passed to memoized messages keep a
-  // stable identity across renders.
-  const planActionsRef = useRef<{ approve: (messageId: string) => void; revise: (messageId: string) => void }>({
+  function selectVariant(messageId: string, index: number) {
+    if (streaming || !activeThread) return;
+    const target = activeThread.messages.find((message) => message.id === messageId);
+    const variant = target?.variants?.[index];
+    if (!variant) return;
+    patchMessage(activeThread.id, messageId, {
+      content: variant.content,
+      model: variant.model,
+      provider: variant.provider,
+      variantIndex: index,
+    });
+  }
+
+  // Branching ported from brainworm: copy the thread up to this message into a
+  // new session and switch to it.
+  function branchThread(messageId: string) {
+    if (streaming || !activeThread) return;
+    const cut = activeThread.messages.findIndex((message) => message.id === messageId);
+    if (cut < 0) return;
+    const now = Date.now();
+    const branch: Thread = {
+      id: id(),
+      title: `${activeThread.title} (branch)`.slice(0, 60),
+      createdAt: now,
+      updatedAt: now,
+      messages: activeThread.messages.slice(0, cut + 1).map((message) => ({
+        ...message,
+        id: id(),
+        attachments: message.attachments?.map((file) => ({ ...file })),
+        variants: message.variants?.map((variant) => ({ ...variant })),
+      })),
+    };
+    setThreads((current) => [branch, ...current]);
+    setActiveId(branch.id);
+    setSidebarOpen(false);
+  }
+
+  // Per-message actions (plan approval from brainworm, plus regenerate,
+  // branch, and variant switching). Routed through a ref so the callbacks
+  // passed to memoized messages keep a stable identity across renders.
+  type MessageActions = {
+    approve: (messageId: string) => void;
+    revise: (messageId: string) => void;
+    regenerate: (messageId: string) => void;
+    branch: (messageId: string) => void;
+    selectVariant: (messageId: string, index: number) => void;
+  };
+  const messageActionsRef = useRef<MessageActions>({
     approve: () => {},
     revise: () => {},
+    regenerate: () => {},
+    branch: () => {},
+    selectVariant: () => {},
   });
-  const planActions = {
-    approve: (messageId: string) => {
+  const messageActions: MessageActions = {
+    approve: (messageId) => {
       if (streaming || !activeThread) return;
       patchMessage(activeThread.id, messageId, { planState: "approved" });
       setMode("build");
       void submit("Implement the approved plan. Complete the work and verify it.", "build");
     },
-    revise: (messageId: string) => {
+    revise: (messageId) => {
       if (streaming || !activeThread) return;
       patchMessage(activeThread.id, messageId, { planState: "changes_requested" });
       setMode("plan");
       setDraft("Revise the plan: ");
       textareaRef.current?.focus();
     },
+    regenerate: (messageId) => void regenerate(messageId),
+    branch: branchThread,
+    selectVariant,
   };
   useEffect(() => {
-    planActionsRef.current = planActions;
+    messageActionsRef.current = messageActions;
   });
-  const approvePlan = useCallback((messageId: string) => planActionsRef.current.approve(messageId), []);
-  const revisePlan = useCallback((messageId: string) => planActionsRef.current.revise(messageId), []);
+  const approvePlan = useCallback((messageId: string) => messageActionsRef.current.approve(messageId), []);
+  const revisePlan = useCallback((messageId: string) => messageActionsRef.current.revise(messageId), []);
+  const regenerateMessage = useCallback((messageId: string) => messageActionsRef.current.regenerate(messageId), []);
+  const branchMessage = useCallback((messageId: string) => messageActionsRef.current.branch(messageId), []);
+  const selectMessageVariant = useCallback(
+    (messageId: string, index: number) => messageActionsRef.current.selectVariant(messageId, index),
+    [],
+  );
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -728,11 +1024,14 @@ export default function Home() {
             <button className={theme === "smoke" ? "active" : ""} onClick={() => setTheme("smoke")} title="Smoke light theme"><span>○</span> Smoke</button>
             <button className={theme === "ember" ? "active" : ""} onClick={() => setTheme("ember")} title="Ember dark theme"><span>●</span> Ember</button>
           </div>
-          <button className="model-pill" onClick={() => setSettingsOpen(true)} style={{ "--provider": currentProvider.accent } as React.CSSProperties}>
-            <span>{currentProvider.shortName}</span>
-            <span className="model-pill-copy"><strong>{currentProvider.name}</strong><small>{currentSettings.model || "Choose model"}</small></span>
-            <span className="chevron">⌄</span>
-          </button>
+          <div className="topbar-right">
+            <ExportMenu thread={activeThread} />
+            <button className="model-pill" onClick={() => setSettingsOpen(true)} style={{ "--provider": currentProvider.accent } as React.CSSProperties}>
+              <span>{currentProvider.shortName}</span>
+              <span className="model-pill-copy"><strong>{currentProvider.name}</strong><small>{currentSettings.model || "Choose model"}</small></span>
+              <span className="chevron">⌄</span>
+            </button>
+          </div>
         </header>
 
         <div className="conversation">
@@ -761,6 +1060,9 @@ export default function Home() {
                   busy={streaming}
                   onApprovePlan={approvePlan}
                   onRevisePlan={revisePlan}
+                  onRegenerate={regenerateMessage}
+                  onBranch={branchMessage}
+                  onSelectVariant={selectMessageVariant}
                 />
               ))}
               <div ref={messagesEndRef} />
