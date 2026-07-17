@@ -1,16 +1,15 @@
 import type { ProviderId } from "./providers";
 
-// Which provider-managed tools each Responses endpoint accepts, following
-// wordmark's catalog: web_search and code_interpreter on OpenAI and xAI,
-// x_search on xAI only, file_search (vector stores) on OpenAI only, and
-// remote MCP servers on the cloud providers. Local servers run no
-// server-side tools.
+// Which provider-managed tools each Responses endpoint accepts: web_search,
+// code_interpreter, and file_search (vector stores) on OpenAI and xAI,
+// x_search on xAI only, and remote MCP servers on the cloud providers.
+// Local servers run no server-side tools.
 export const TOOL_SUPPORT: Record<
   ProviderId,
   { webSearch: boolean; xSearch: boolean; codeInterpreter: boolean; fileSearch: boolean; mcp: boolean }
 > = {
   openai: { webSearch: true, xSearch: false, codeInterpreter: true, fileSearch: true, mcp: true },
-  xai: { webSearch: true, xSearch: true, codeInterpreter: true, fileSearch: false, mcp: true },
+  xai: { webSearch: true, xSearch: true, codeInterpreter: true, fileSearch: true, mcp: true },
   lmstudio: { webSearch: false, xSearch: false, codeInterpreter: false, fileSearch: false, mcp: false },
   ollama: { webSearch: false, xSearch: false, codeInterpreter: false, fileSearch: false, mcp: false },
 };

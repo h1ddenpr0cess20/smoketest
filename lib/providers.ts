@@ -65,7 +65,7 @@ export function isProviderId(value: unknown): value is ProviderId {
   return typeof value === "string" && PROVIDER_IDS.includes(value as ProviderId);
 }
 
-export function providerEndpoint(provider: ProviderId, resource: "responses" | "models") {
+export function providerEndpoint(provider: ProviderId, resource: "responses" | "models" | "embeddings") {
   return `${PROVIDERS[provider].baseUrl}/${resource}`;
 }
 

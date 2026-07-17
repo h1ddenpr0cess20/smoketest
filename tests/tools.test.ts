@@ -24,9 +24,9 @@ describe("provider tool building", () => {
     expect(withoutStores).not.toContain("file_search");
   });
 
-  it("builds the xAI set (x_search, no file_search)", () => {
+  it("builds the xAI set (x_search included)", () => {
     const types = buildTools("xai", everything).map((tool) => tool.type);
-    expect(types).toEqual(["web_search", "x_search", "code_interpreter", "mcp"]);
+    expect(types).toEqual(["web_search", "x_search", "code_interpreter", "file_search", "mcp"]);
   });
 
   it("emits MCP servers with approval disabled and rejects bad entries", () => {

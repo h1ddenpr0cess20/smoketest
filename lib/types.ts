@@ -49,6 +49,8 @@ export type ProviderConfig = {
   codeInterpreter: boolean;
   fileSearch: boolean;
   vectorStoreId: string;
+  localRag: boolean;
+  embeddingModel: string;
 };
 
 export type ProviderSettings = Record<ProviderId, ProviderConfig>;

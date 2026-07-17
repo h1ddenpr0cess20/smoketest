@@ -17,6 +17,15 @@ import { PROVIDERS, PROVIDER_IDS, type ProviderId } from "@/lib/providers";
 import { parseCommand } from "@/lib/commands";
 import type { Attachment, McpServerEntry, Message, MessageVariant, Mode, ProviderSettings, Thread } from "@/lib/types";
 import { MCP_LABEL_PATTERN, TOOL_SUPPORT, isValidMcpUrl, type ToolRequest } from "@/lib/tools";
+import {
+  buildReferenceBlock,
+  buildRetrievalQuery,
+  chunkText,
+  EMBEDDING_BATCH_SIZE,
+  rankChunks,
+  resolveEmbeddingModel,
+  type RagChunk,
+} from "@/lib/rag";
 import { EXPORT_FORMATS, exportFilename, exportMime, renderExport, type ExportFormatKey } from "@/lib/export";
 
 const STORAGE = {
@@ -79,6 +88,8 @@ function defaultSettings(): ProviderSettings {
         codeInterpreter: false,
         fileSearch: false,
         vectorStoreId: "",
+        localRag: PROVIDERS[provider].local,
+        embeddingModel: "",
       },
     ]),
   ) as ProviderSettings;
@@ -95,7 +106,8 @@ function restoreSettings(saved: unknown): ProviderSettings {
       if (typeof entry.apiKey === "string") merged[provider].apiKey = entry.apiKey;
       if (typeof entry.model === "string") merged[provider].model = entry.model;
       if (typeof entry.vectorStoreId === "string") merged[provider].vectorStoreId = entry.vectorStoreId;
-      for (const toggle of ["webSearch", "xSearch", "codeInterpreter", "fileSearch"] as const) {
+      if (typeof entry.embeddingModel === "string") merged[provider].embeddingModel = entry.embeddingModel;
+      for (const toggle of ["webSearch", "xSearch", "codeInterpreter", "fileSearch", "localRag"] as const) {
         if (typeof entry[toggle] === "boolean") merged[provider][toggle] = entry[toggle];
       }
     }
@@ -187,6 +199,67 @@ async function copyText(text: string) {
     document.execCommand("copy");
     node.remove();
   }
+}
+
+// Local RAG index, per thread and in-memory (darkwords' model): rebuilt
+// lazily from the attachments persisted on a thread's messages, so a reload
+// re-indexes on the next send instead of persisting vectors.
+type ThreadRagIndex = { chunks: RagChunk[]; seen: Set<string> };
+const ragIndexes = new Map<string, ThreadRagIndex>();
+
+function getRagIndex(threadId: string): ThreadRagIndex {
+  let index = ragIndexes.get(threadId);
+  if (!index) {
+    index = { chunks: [], seen: new Set() };
+    ragIndexes.set(threadId, index);
+  }
+  return index;
+}
+
+// Batched embeddings through the same-origin proxy, with wordmark's response
+// validation (order, dimensionality, finiteness).
+async function fetchEmbeddings(
+  provider: ProviderId,
+  apiKey: string,
+  texts: string[],
+  model: string,
+  signal?: AbortSignal,
+): Promise<number[][]> {
+  const vectors: number[][] = [];
+  for (let start = 0; start < texts.length; start += EMBEDDING_BATCH_SIZE) {
+    const batch = texts.slice(start, start + EMBEDDING_BATCH_SIZE);
+    const response = await fetch("/api/embeddings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, apiKey, model, input: batch }),
+      signal,
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error || `Embeddings request failed (${response.status}).`);
+    }
+    const data = (await response.json()) as { data?: { index: number; embedding: number[] }[] };
+    const rows = Array.isArray(data?.data) ? data.data : [];
+    if (rows.length !== batch.length) {
+      throw new Error(`Embeddings response returned ${rows.length} vector(s) for ${batch.length} input(s)`);
+    }
+    const ordered = rows.slice().sort((a, b) => a.index - b.index);
+    const dimensions = ordered[0]?.embedding?.length || 0;
+    const valid =
+      dimensions > 0 &&
+      ordered.every(
+        (row, index) =>
+          row.index === index &&
+          Array.isArray(row.embedding) &&
+          row.embedding.length === dimensions &&
+          row.embedding.every(Number.isFinite),
+      );
+    if (!valid) {
+      throw new Error("Embeddings response contained missing, malformed, or inconsistent vectors");
+    }
+    vectors.push(...ordered.map((row) => row.embedding));
+  }
+  return vectors;
 }
 
 type StreamPayload = {
@@ -650,6 +723,7 @@ export default function Home() {
 
   function deleteThread(threadId: string) {
     if (streaming) return;
+    ragIndexes.delete(threadId);
     const next = threads.filter((thread) => thread.id !== threadId);
     if (!next.length) {
       const replacement = blankThread();
@@ -825,7 +899,8 @@ export default function Home() {
       mode: activeMode,
       planState: activeMode === "plan" ? "proposed" : undefined,
     };
-    const requestInput = buildInput(activeThread.messages, prompt, attachments);
+    const priorMessages = activeThread.messages;
+    const pendingAttachments = attachments;
     const isFirst = activeThread.messages.length === 0;
     setThreads((current) =>
       current.map((thread) =>
@@ -846,6 +921,87 @@ export default function Home() {
     const controller = new AbortController();
     abortRef.current = controller;
     try {
+      // Local RAG (from wordmark/darkwords): for local providers, index the
+      // thread's attachments client-side and send only retrieved excerpts;
+      // any failure falls back to inlining the files as before.
+      let requestInput = buildInput(priorMessages, prompt, pendingAttachments);
+      let ragLabels: string[] = [];
+      if (currentProvider.local && currentSettings.localRag) {
+        const embeddingModel = resolveEmbeddingModel(currentSettings.embeddingModel, models);
+        const threadAttachments = [
+          ...priorMessages.flatMap((message) => message.attachments ?? []),
+          ...pendingAttachments,
+        ];
+        if (embeddingModel && threadAttachments.length) {
+          try {
+            const index = getRagIndex(threadId);
+            const fresh = threadAttachments.filter((file) => !index.seen.has(file.id));
+            if (fresh.length) {
+              const pendingChunks = fresh.flatMap((file) =>
+                chunkText(file.content).map((text) => ({ name: file.name, text })),
+              );
+              if (pendingChunks.length) {
+                const vectors = await fetchEmbeddings(
+                  provider,
+                  currentSettings.apiKey,
+                  pendingChunks.map((chunk) => chunk.text),
+                  embeddingModel,
+                  controller.signal,
+                );
+                const replaced = new Set(pendingChunks.map((chunk) => chunk.name));
+                index.chunks = index.chunks.filter((chunk) => !replaced.has(chunk.name));
+                pendingChunks.forEach((chunk, i) => {
+                  index.chunks.push({ ...chunk, vector: vectors[i], model: embeddingModel });
+                });
+              }
+              for (const file of fresh) index.seen.add(file.id);
+            }
+            // Chunks embedded with a different model are re-embedded in place.
+            const stale = index.chunks.filter((chunk) => chunk.model !== embeddingModel);
+            if (stale.length) {
+              const vectors = await fetchEmbeddings(
+                provider,
+                currentSettings.apiKey,
+                stale.map((chunk) => chunk.text),
+                embeddingModel,
+                controller.signal,
+              );
+              stale.forEach((chunk, i) => {
+                chunk.vector = vectors[i];
+                chunk.model = embeddingModel;
+              });
+            }
+            if (index.chunks.length) {
+              const priorUserTexts = priorMessages
+                .filter((message) => message.role === "user")
+                .map((message) => message.content);
+              const query = buildRetrievalQuery(priorUserTexts, prompt);
+              const [queryVector] = await fetchEmbeddings(
+                provider,
+                currentSettings.apiKey,
+                [query],
+                embeddingModel,
+                controller.signal,
+              );
+              const retrieved = rankChunks(index.chunks, queryVector, query);
+              const names = [...new Set(index.chunks.map((chunk) => chunk.name))].sort();
+              const block = buildReferenceBlock(retrieved, names, prompt);
+              if (block) {
+                requestInput = buildInput(priorMessages, `${prompt}${block}`, []);
+                ragLabels = [`Local RAG: ${retrieved.length} chunks · ${names.length} file${names.length === 1 ? "" : "s"}`];
+              }
+            }
+          } catch {
+            if (controller.signal.aborted) {
+              patchMessage(threadId, assistantId, { content: "Generation stopped." });
+              return;
+            }
+            // Retrieval is best-effort; the inline-attachment input stands.
+          }
+        }
+      }
+      if (ragLabels.length) patchMessage(threadId, assistantId, { toolActivity: ragLabels });
+
       const outcome = await streamAssistant(
         {
           provider,
@@ -857,24 +1013,26 @@ export default function Home() {
           tools: currentToolRequest(),
         },
         controller.signal,
-        (text, usedTools) => patchMessage(threadId, assistantId, { content: text, toolActivity: usedTools }),
+        (text, usedTools) =>
+          patchMessage(threadId, assistantId, { content: text, toolActivity: [...ragLabels, ...usedTools] }),
       );
+      const finalActivity = [...ragLabels, ...outcome.toolActivity];
       if (controller.signal.aborted) {
         // Keep whatever streamed before the stop, including the throttled tail.
         patchMessage(threadId, assistantId, {
           content: outcome.text ? `${outcome.text}\n\n_Generation stopped._` : "Generation stopped.",
-          toolActivity: outcome.toolActivity,
+          toolActivity: finalActivity,
         });
       } else if (outcome.error) {
         patchMessage(threadId, assistantId, {
           content: outcome.text ? `${outcome.text}\n\n${outcome.error}` : outcome.error,
           error: true,
-          toolActivity: outcome.toolActivity,
+          toolActivity: finalActivity,
         });
       } else {
         patchMessage(threadId, assistantId, {
           content: outcome.text || "The provider completed without text output.",
-          toolActivity: outcome.toolActivity,
+          toolActivity: finalActivity,
         });
       }
     } finally {
@@ -1307,7 +1465,21 @@ export default function Home() {
                   </div>
                 </>
               ) : (
-                <p className="tools-empty">Server-side tools are not available for local providers — {currentProvider.name} receives plain Responses requests.</p>
+                <>
+                  <div className="tools-grid">
+                    <label className="tool-toggle">
+                      <input type="checkbox" checked={currentSettings.localRag} onChange={(event) => updateProviderSettings({ localRag: event.target.checked })} />
+                      <span><strong>Local RAG</strong><small>Chunk and embed attached files via {currentProvider.name}&apos;s /v1/embeddings; send only the passages relevant to each question</small></span>
+                    </label>
+                  </div>
+                  {currentSettings.localRag && (
+                    <label className="tools-field">
+                      Embedding model
+                      <input value={currentSettings.embeddingModel} onChange={(event) => updateProviderSettings({ embeddingModel: event.target.value })} placeholder="auto (nomic, mxbai, bge…)" />
+                    </label>
+                  )}
+                  <p className="tools-empty">Server-side tools are not available for local providers; retrieval runs in this browser instead. Blank embedding model auto-picks from the server&apos;s model list.</p>
+                </>
               )}
             </div>
             <div className="connection-row">
