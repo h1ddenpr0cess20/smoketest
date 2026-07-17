@@ -1,10 +1,18 @@
 "use client";
 
-import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, KeyboardEvent, memo, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { outputTextFromJson, eventText, parseSseBlock } from "@/lib/stream";
-import { PROVIDERS, PROVIDER_IDS, type ProviderId } from "@/lib/providers";
+import {
+  eventErrorMessage,
+  eventText,
+  finalResponseText,
+  incompleteReason,
+  isErrorEvent,
+  outputTextFromJson,
+  parseSseBlock,
+} from "@/lib/stream";
+import { PROVIDERS, PROVIDER_IDS, serviceSupportsReasoning, type ProviderId } from "@/lib/providers";
 import type { Attachment, Message, Mode, ProviderSettings, Thread } from "@/lib/types";
 
 const STORAGE = {
@@ -60,6 +68,45 @@ function defaultSettings(): ProviderSettings {
   ) as ProviderSettings;
 }
 
+// Stored state is untrusted: older shapes or hand-edited values must never
+// crash the render, so restore field by field on top of the defaults.
+function restoreSettings(saved: unknown): ProviderSettings {
+  const merged = defaultSettings();
+  if (saved && typeof saved === "object") {
+    for (const provider of PROVIDER_IDS) {
+      const entry = (saved as Record<string, { apiKey?: unknown; model?: unknown }>)[provider];
+      if (!entry || typeof entry !== "object") continue;
+      if (typeof entry.apiKey === "string") merged[provider].apiKey = entry.apiKey;
+      if (typeof entry.model === "string") merged[provider].model = entry.model;
+    }
+  }
+  return merged;
+}
+
+function restoreThreads(saved: unknown): Thread[] {
+  if (!Array.isArray(saved)) return [blankThread()];
+  const threads = saved
+    .filter(
+      (thread): thread is Thread =>
+        Boolean(thread) &&
+        typeof thread === "object" &&
+        typeof (thread as Thread).id === "string" &&
+        typeof (thread as Thread).title === "string" &&
+        Array.isArray((thread as Thread).messages),
+    )
+    .map((thread) => ({
+      ...thread,
+      messages: thread.messages.filter(
+        (message) =>
+          Boolean(message) &&
+          typeof message === "object" &&
+          typeof message.content === "string" &&
+          (message.role === "user" || message.role === "assistant"),
+      ),
+    }));
+  return threads.length ? threads : [blankThread()];
+}
+
 function shortTitle(value: string) {
   const clean = value.replace(/\s+/g, " ").trim();
   return clean.length > 38 ? `${clean.slice(0, 38).trim()}…` : clean || "Untitled session";
@@ -102,6 +149,35 @@ function Icon({ name, size = 18 }: { name: "plus" | "settings" | "paperclip" | "
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
+// Memoized so a streaming update to one message doesn't re-render (and
+// re-parse the markdown of) every other message in the conversation.
+const MessageView = memo(function MessageView({ message, fallbackProvider }: { message: Message; fallbackProvider: ProviderId }) {
+  const messageProvider = PROVIDERS[message.provider ?? fallbackProvider] ?? PROVIDERS[fallbackProvider];
+  return (
+    <article className={`message ${message.role} ${message.error ? "message-error" : ""}`}>
+      <div className="message-rail">
+        <span className="avatar">{message.role === "user" ? "YOU" : messageProvider.shortName}</span>
+        <span className="rail-line" />
+      </div>
+      <div className="message-body">
+        <div className="message-meta">
+          <strong>{message.role === "user" ? "You" : "smoketest"}</strong>
+          <span>{timeLabel(message.createdAt)}</span>
+          {message.role === "assistant" && <><span>·</span><span>{message.model}</span></>}
+        </div>
+        {message.attachments?.length ? (
+          <div className="message-files">{message.attachments.map((file) => <span key={file.id}>⌘ {file.name}</span>)}</div>
+        ) : null}
+        {message.content ? (
+          <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div>
+        ) : (
+          <div className="thinking"><span /><span /><span /><small>reading the smoke</small></div>
+        )}
+      </div>
+    </article>
+  );
+});
+
 export default function Home() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [activeId, setActiveId] = useState("");
@@ -133,8 +209,7 @@ export default function Home() {
   useEffect(() => {
     const restoredThreads = (() => {
       try {
-        const value = JSON.parse(localStorage.getItem(STORAGE.threads) || "null") as Thread[] | null;
-        return Array.isArray(value) && value.length ? value : [blankThread()];
+        return restoreThreads(JSON.parse(localStorage.getItem(STORAGE.threads) || "null"));
       } catch {
         return [blankThread()];
       }
@@ -144,8 +219,8 @@ export default function Home() {
     let restoredMode: Mode | null = null;
     let restoredTheme: "smoke" | "ember" | null = null;
     try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE.settings) || "null") as ProviderSettings | null;
-      if (saved) restoredSettings = { ...defaultSettings(), ...saved };
+      const saved = JSON.parse(localStorage.getItem(STORAGE.settings) || "null") as unknown;
+      if (saved) restoredSettings = restoreSettings(saved);
       const savedProvider = localStorage.getItem(STORAGE.provider);
       if (savedProvider && PROVIDER_IDS.includes(savedProvider as ProviderId)) restoredProvider = savedProvider as ProviderId;
       const savedMode = localStorage.getItem(STORAGE.mode);
@@ -166,17 +241,31 @@ export default function Home() {
     });
   }, []);
 
+  // Threads change on every streamed delta; serializing them (attachments
+  // included) to localStorage on each one froze the tab. Debounce the write and
+  // never let a quota error escape into React.
   useEffect(() => {
     if (!hydrated) return;
-    localStorage.setItem(STORAGE.threads, JSON.stringify(threads));
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE.threads, JSON.stringify(threads));
+      } catch {
+        // Quota exceeded or storage unavailable — keep the in-memory state.
+      }
+    }, 400);
+    return () => clearTimeout(timer);
   }, [threads, hydrated]);
 
   useEffect(() => {
     if (!hydrated) return;
-    localStorage.setItem(STORAGE.settings, JSON.stringify(settings));
-    localStorage.setItem(STORAGE.provider, provider);
-    localStorage.setItem(STORAGE.mode, mode);
-    localStorage.setItem(STORAGE.theme, theme);
+    try {
+      localStorage.setItem(STORAGE.settings, JSON.stringify(settings));
+      localStorage.setItem(STORAGE.provider, provider);
+      localStorage.setItem(STORAGE.mode, mode);
+      localStorage.setItem(STORAGE.theme, theme);
+    } catch {
+      // Storage unavailable — settings stay in memory for this session.
+    }
   }, [settings, provider, mode, theme, hydrated]);
 
   useEffect(() => {
@@ -201,16 +290,15 @@ export default function Home() {
 
   function deleteThread(threadId: string) {
     if (streaming) return;
-    setThreads((current) => {
-      const next = current.filter((thread) => thread.id !== threadId);
-      if (!next.length) {
-        const replacement = blankThread();
-        setActiveId(replacement.id);
-        return [replacement];
-      }
-      if (threadId === activeId) setActiveId(next[0].id);
-      return next;
-    });
+    const next = threads.filter((thread) => thread.id !== threadId);
+    if (!next.length) {
+      const replacement = blankThread();
+      setThreads([replacement]);
+      setActiveId(replacement.id);
+      return;
+    }
+    setThreads(next);
+    if (threadId === activeId) setActiveId(next[0].id);
   }
 
   function updateProviderSettings(patch: Partial<{ apiKey: string; model: string }>) {
@@ -314,6 +402,16 @@ export default function Home() {
     const controller = new AbortController();
     abortRef.current = controller;
     let streamedOutput = "";
+    let lastFlush = 0;
+    // Rendering every SSE delta re-parses the whole conversation's markdown and
+    // re-renders the tree; at provider token rates that locked up the browser.
+    // Cap UI updates to ~12/s and force a final flush when the stream settles.
+    const flush = (force = false) => {
+      const now = Date.now();
+      if (!force && now - lastFlush < 80) return;
+      lastFlush = now;
+      patchMessage(threadId, assistantId, { content: streamedOutput });
+    };
 
     try {
       const response = await fetch("/api/responses", {
@@ -344,37 +442,50 @@ export default function Home() {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        let finalText = "";
+        let truncatedReason = "";
+        const handleEvent = (event: ReturnType<typeof parseSseBlock>) => {
+          if (!event) return;
+          if (isErrorEvent(event)) {
+            throw new Error(eventErrorMessage(event) || "The provider failed while generating.");
+          }
+          const fromFinal = finalResponseText(event);
+          if (fromFinal) finalText = fromFinal;
+          const reason = incompleteReason(event);
+          if (reason) truncatedReason = reason;
+          const delta = eventText(event);
+          if (delta) {
+            streamedOutput += delta;
+            flush();
+          }
+        };
         while (true) {
           const { done, value: chunk } = await reader.read();
           buffer += decoder.decode(chunk, { stream: !done });
           const blocks = buffer.split(/\r?\n\r?\n/);
           buffer = blocks.pop() ?? "";
-          for (const block of blocks) {
-            const event = parseSseBlock(block);
-            if (!event) continue;
-            if (event.type === "error" || event.type === "response.failed") {
-              throw new Error(event.error?.message || "The provider failed while generating.");
-            }
-            const delta = eventText(event);
-            if (delta) {
-              streamedOutput += delta;
-              patchMessage(threadId, assistantId, { content: streamedOutput });
-            }
-          }
+          for (const block of blocks) handleEvent(parseSseBlock(block));
           if (done) break;
         }
-        if (!streamedOutput && buffer.trim()) {
-          const event = parseSseBlock(buffer);
-          streamedOutput += event ? eventText(event) : "";
+        if (buffer.trim()) handleEvent(parseSseBlock(buffer));
+        // Some providers only deliver text in the final response payload.
+        if (!streamedOutput && finalText) streamedOutput = finalText;
+        if (truncatedReason) {
+          streamedOutput += `${streamedOutput ? "\n\n" : ""}_Response incomplete (${truncatedReason})._`;
         }
-        if (!streamedOutput) patchMessage(threadId, assistantId, { content: "The provider completed without text output." });
+        if (streamedOutput) flush(true);
+        else patchMessage(threadId, assistantId, { content: "The provider completed without text output." });
       }
     } catch (error) {
       if (controller.signal.aborted) {
-        if (!streamedOutput) patchMessage(threadId, assistantId, { content: "Generation stopped." });
-      } else {
+        // Keep whatever streamed before the stop, including the throttled tail.
         patchMessage(threadId, assistantId, {
-          content: error instanceof Error ? error.message : "Something went wrong.",
+          content: streamedOutput ? `${streamedOutput}\n\n_Generation stopped._` : "Generation stopped.",
+        });
+      } else {
+        const message = error instanceof Error ? error.message : "Something went wrong.";
+        patchMessage(threadId, assistantId, {
+          content: streamedOutput ? `${streamedOutput}\n\n${message}` : message,
           error: true,
         });
       }
@@ -407,7 +518,7 @@ export default function Home() {
           <button className="icon-button mobile-close" onClick={() => setSidebarOpen(false)} aria-label="Close navigation"><Icon name="close" /></button>
         </div>
 
-        <button className="new-thread" onClick={createThread}><Icon name="plus" size={16} /> New session <kbd>⌘N</kbd></button>
+        <button className="new-thread" onClick={createThread}><Icon name="plus" size={16} /> New session</button>
 
         <div className="sidebar-label"><span>SESSIONS</span><span>{threads.length}</span></div>
         <nav className="thread-list" aria-label="Sessions">
@@ -494,27 +605,7 @@ export default function Home() {
           ) : (
             <div className="message-list">
               {activeThread.messages.map((message) => (
-                <article className={`message ${message.role} ${message.error ? "message-error" : ""}`} key={message.id}>
-                  <div className="message-rail">
-                    <span className="avatar">{message.role === "user" ? "YOU" : PROVIDERS[message.provider ?? provider].shortName}</span>
-                    <span className="rail-line" />
-                  </div>
-                  <div className="message-body">
-                    <div className="message-meta">
-                      <strong>{message.role === "user" ? "You" : "smoketest"}</strong>
-                      <span>{timeLabel(message.createdAt)}</span>
-                      {message.role === "assistant" && <><span>·</span><span>{message.model}</span></>}
-                    </div>
-                    {message.attachments?.length ? (
-                      <div className="message-files">{message.attachments.map((file) => <span key={file.id}>⌘ {file.name}</span>)}</div>
-                    ) : null}
-                    {message.content ? (
-                      <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div>
-                    ) : (
-                      <div className="thinking"><span /><span /><span /><small>reading the smoke</small></div>
-                    )}
-                  </div>
-                </article>
+                <MessageView key={message.id} message={message} fallbackProvider={provider} />
               ))}
               <div ref={messagesEndRef} />
             </div>
@@ -584,8 +675,8 @@ export default function Home() {
               </label>
               <label>
                 Reasoning effort
-                <select value={reasoning} disabled={provider === "ollama"} onChange={(event) => setReasoning(event.target.value)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
-                <small>{provider === "ollama" ? "Ollama's Responses endpoint does not accept this field." : "Sent as the standard Responses API reasoning parameter."}</small>
+                <select value={reasoning} disabled={!serviceSupportsReasoning(provider)} onChange={(event) => setReasoning(event.target.value)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
+                <small>{serviceSupportsReasoning(provider) ? "Sent when the model accepts the standard reasoning parameter." : "xAI's Responses endpoint rejects the reasoning parameter, so it is not sent."}</small>
               </label>
             </div>
             <div className="connection-row">

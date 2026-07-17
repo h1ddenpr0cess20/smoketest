@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authorizationHeaders, isProviderId, providerEndpoint } from "../lib/providers";
+import { authorizationHeaders, isProviderId, providerEndpoint, supportsReasoning } from "../lib/providers";
 
 describe("provider registry", () => {
   it("accepts only supported providers", () => {
@@ -16,5 +16,13 @@ describe("provider registry", () => {
   it("uses harmless placeholder auth for local servers", () => {
     expect(authorizationHeaders("ollama", "").Authorization).toBe("Bearer ollama");
     expect(authorizationHeaders("openai", "sk-test").Authorization).toBe("Bearer sk-test");
+  });
+
+  it("gates reasoning effort by provider and model", () => {
+    expect(supportsReasoning("xai", "grok-4.5")).toBe(false);
+    expect(supportsReasoning("openai", "gpt-4.1")).toBe(false);
+    expect(supportsReasoning("openai", "gpt-5.6")).toBe(true);
+    expect(supportsReasoning("ollama", "qwen3:8b")).toBe(true);
+    expect(supportsReasoning("lmstudio", "")).toBe(true);
   });
 });
