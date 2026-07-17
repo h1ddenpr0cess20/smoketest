@@ -19,6 +19,7 @@ export type Message = {
   mode?: Mode;
   attachments?: Attachment[];
   error?: boolean;
+  planState?: "proposed" | "approved" | "changes_requested";
 };
 
 export type Thread = {

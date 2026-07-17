@@ -18,6 +18,23 @@ type RequestBody = {
   reasoningEffort?: unknown;
 };
 
+type InputMessage = { role: "user" | "assistant"; content: string };
+
+// `input` is either a plain string or a role-tagged message array. Anything
+// else (or an empty value) is rejected before it reaches the provider.
+function sanitizeInput(value: unknown): string | InputMessage[] | null {
+  if (typeof value === "string") return value.trim() || null;
+  if (!Array.isArray(value) || !value.length) return null;
+  const messages: InputMessage[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") return null;
+    const { role, content } = item as { role?: unknown; content?: unknown };
+    if ((role !== "user" && role !== "assistant") || typeof content !== "string") return null;
+    messages.push({ role, content });
+  }
+  return messages;
+}
+
 export async function POST(request: NextRequest) {
   let body: RequestBody;
   try {
@@ -33,14 +50,14 @@ export async function POST(request: NextRequest) {
   const provider = body.provider;
   const apiKey = typeof body.apiKey === "string" ? body.apiKey : "";
   const model = typeof body.model === "string" ? body.model.trim() : "";
-  const input = typeof body.input === "string" ? body.input.trim() : "";
+  const input = sanitizeInput(body.input);
   const instructions = typeof body.instructions === "string" ? body.instructions.trim() : "";
 
   if (PROVIDERS[provider].apiKeyRequired && !apiKey.trim()) {
     return Response.json({ error: `${PROVIDERS[provider].name} requires an API key.` }, { status: 400 });
   }
   if (!model) return Response.json({ error: "Choose a model first." }, { status: 400 });
-  if (!input) return Response.json({ error: "Input cannot be empty." }, { status: 400 });
+  if (!input) return Response.json({ error: "Input is empty or malformed." }, { status: 400 });
 
   const upstreamBody: Record<string, unknown> = {
     model,
