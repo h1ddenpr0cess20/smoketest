@@ -11,10 +11,12 @@ import {
   isErrorEvent,
   outputTextFromJson,
   parseSseBlock,
+  toolActivity,
 } from "@/lib/stream";
 import { PROVIDERS, PROVIDER_IDS, type ProviderId } from "@/lib/providers";
 import { parseCommand } from "@/lib/commands";
-import type { Attachment, Message, MessageVariant, Mode, ProviderSettings, Thread } from "@/lib/types";
+import type { Attachment, McpServerEntry, Message, MessageVariant, Mode, ProviderSettings, Thread } from "@/lib/types";
+import { MCP_LABEL_PATTERN, TOOL_SUPPORT, isValidMcpUrl, type ToolRequest } from "@/lib/tools";
 import { EXPORT_FORMATS, exportFilename, exportMime, renderExport, type ExportFormatKey } from "@/lib/export";
 
 const STORAGE = {
@@ -23,6 +25,7 @@ const STORAGE = {
   provider: "smoketest.provider.v1",
   mode: "smoketest.mode.v1",
   theme: "smoketest.theme.v1",
+  mcp: "smoketest.mcp.v1",
 } as const;
 
 const MODE_COPY: Record<Mode, { label: string; mark: string; description: string; instructions: string }> = {
@@ -66,7 +69,18 @@ function blankThread(): Thread {
 
 function defaultSettings(): ProviderSettings {
   return Object.fromEntries(
-    PROVIDER_IDS.map((provider) => [provider, { apiKey: "", model: PROVIDERS[provider].defaultModel }]),
+    PROVIDER_IDS.map((provider) => [
+      provider,
+      {
+        apiKey: "",
+        model: PROVIDERS[provider].defaultModel,
+        webSearch: TOOL_SUPPORT[provider].webSearch,
+        xSearch: false,
+        codeInterpreter: false,
+        fileSearch: false,
+        vectorStoreId: "",
+      },
+    ]),
   ) as ProviderSettings;
 }
 
@@ -76,13 +90,30 @@ function restoreSettings(saved: unknown): ProviderSettings {
   const merged = defaultSettings();
   if (saved && typeof saved === "object") {
     for (const provider of PROVIDER_IDS) {
-      const entry = (saved as Record<string, { apiKey?: unknown; model?: unknown }>)[provider];
+      const entry = (saved as Record<string, Record<string, unknown>>)[provider];
       if (!entry || typeof entry !== "object") continue;
       if (typeof entry.apiKey === "string") merged[provider].apiKey = entry.apiKey;
       if (typeof entry.model === "string") merged[provider].model = entry.model;
+      if (typeof entry.vectorStoreId === "string") merged[provider].vectorStoreId = entry.vectorStoreId;
+      for (const toggle of ["webSearch", "xSearch", "codeInterpreter", "fileSearch"] as const) {
+        if (typeof entry[toggle] === "boolean") merged[provider][toggle] = entry[toggle];
+      }
     }
   }
   return merged;
+}
+
+function restoreMcpServers(saved: unknown): McpServerEntry[] {
+  if (!Array.isArray(saved)) return [];
+  return saved.filter(
+    (server): server is McpServerEntry =>
+      Boolean(server) &&
+      typeof server === "object" &&
+      typeof (server as McpServerEntry).id === "string" &&
+      typeof (server as McpServerEntry).label === "string" &&
+      typeof (server as McpServerEntry).url === "string" &&
+      typeof (server as McpServerEntry).enabled === "boolean",
+  );
 }
 
 function restoreThreads(saved: unknown): Thread[] {
@@ -165,8 +196,9 @@ type StreamPayload = {
   input: Array<{ role: "user" | "assistant"; content: string }>;
   instructions: string;
   reasoningEffort: string;
+  tools: ToolRequest;
 };
-type StreamOutcome = { text: string; error?: string };
+type StreamOutcome = { text: string; error?: string; toolActivity: string[] };
 
 // Streams one assistant turn through the local proxy, shared by send and
 // regenerate. Never throws: an abort surfaces as a plain partial result (the
@@ -176,15 +208,19 @@ type StreamOutcome = { text: string; error?: string };
 async function streamAssistant(
   payload: StreamPayload,
   signal: AbortSignal,
-  onUpdate: (text: string) => void,
+  onUpdate: (text: string, toolActivity: string[]) => void,
 ): Promise<StreamOutcome> {
   let streamed = "";
   let lastFlush = 0;
-  const push = () => {
+  // Keyed by item id so a tool call's label upgrades in place when the query
+  // arrives on output_item.done instead of duplicating the entry.
+  const activities = new Map<string, string>();
+  const activityList = () => [...activities.values()];
+  const push = (force = false) => {
     const now = Date.now();
-    if (now - lastFlush < 80) return;
+    if (!force && now - lastFlush < 80) return;
     lastFlush = now;
-    onUpdate(streamed);
+    onUpdate(streamed, activityList());
   };
   try {
     const response = await fetch("/api/responses", {
@@ -195,12 +231,16 @@ async function streamAssistant(
     });
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as { error?: string };
-      return { text: "", error: body.error || `${PROVIDERS[payload.provider].name} returned ${response.status}.` };
+      return {
+        text: "",
+        error: body.error || `${PROVIDERS[payload.provider].name} returned ${response.status}.`,
+        toolActivity: [],
+      };
     }
     if ((response.headers.get("content-type") || "").includes("application/json")) {
-      return { text: outputTextFromJson((await response.json()) as unknown) };
+      return { text: outputTextFromJson((await response.json()) as unknown), toolActivity: [] };
     }
-    if (!response.body) return { text: "", error: "The provider returned an empty stream." };
+    if (!response.body) return { text: "", error: "The provider returned an empty stream.", toolActivity: [] };
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -216,6 +256,11 @@ async function streamAssistant(
       if (fromFinal) finalText = fromFinal;
       const reason = incompleteReason(event);
       if (reason) truncatedReason = reason;
+      const activity = toolActivity(event);
+      if (activity) {
+        activities.set(activity.id, activity.label);
+        push(true);
+      }
       const delta = eventText(event);
       if (delta) {
         streamed += delta;
@@ -234,10 +279,14 @@ async function streamAssistant(
     // Some providers only deliver text in the final response payload.
     if (!streamed && finalText) streamed = finalText;
     if (truncatedReason) streamed += `${streamed ? "\n\n" : ""}_Response incomplete (${truncatedReason})._`;
-    return { text: streamed };
+    return { text: streamed, toolActivity: activityList() };
   } catch (error) {
-    if (signal.aborted) return { text: streamed };
-    return { text: streamed, error: error instanceof Error ? error.message : "Something went wrong." };
+    if (signal.aborted) return { text: streamed, toolActivity: activityList() };
+    return {
+      text: streamed,
+      error: error instanceof Error ? error.message : "Something went wrong.",
+      toolActivity: activityList(),
+    };
   }
 }
 
@@ -409,6 +458,11 @@ const MessageView = memo(function MessageView({
         {message.attachments?.length ? (
           <div className="message-files">{message.attachments.map((file) => <span key={file.id}>⌘ {file.name}</span>)}</div>
         ) : null}
+        {message.toolActivity?.length ? (
+          <div className="tool-activity" aria-label="Tool activity">
+            {message.toolActivity.map((label, index) => <span key={`${index}-${label}`}>⚙ {label}</span>)}
+          </div>
+        ) : null}
         {message.content ? (
           <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: CodeBlock }}>{message.content}</ReactMarkdown></div>
         ) : (
@@ -466,6 +520,8 @@ export default function Home() {
   const [models, setModels] = useState<string[]>([]);
   const [modelStatus, setModelStatus] = useState("");
   const [modelsRefresh, setModelsRefresh] = useState(0);
+  const [mcpServers, setMcpServers] = useState<McpServerEntry[]>([]);
+  const [mcpDraft, setMcpDraft] = useState({ label: "", url: "" });
   const discoverSeq = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -503,11 +559,19 @@ export default function Home() {
     } catch {
       // Invalid local state falls back to defaults.
     }
+    const restoredMcp = (() => {
+      try {
+        return restoreMcpServers(JSON.parse(localStorage.getItem(STORAGE.mcp) || "null"));
+      } catch {
+        return [];
+      }
+    })();
     queueMicrotask(() => {
       if (restoredSettings) setSettings(restoredSettings);
       if (restoredProvider) setProvider(restoredProvider);
       if (restoredMode) setMode(restoredMode);
       if (restoredTheme) setTheme(restoredTheme);
+      setMcpServers(restoredMcp);
       setThreads(restoredThreads);
       setActiveId(restoredThreads[0].id);
       setHydrated(true);
@@ -536,10 +600,11 @@ export default function Home() {
       localStorage.setItem(STORAGE.provider, provider);
       localStorage.setItem(STORAGE.mode, mode);
       localStorage.setItem(STORAGE.theme, theme);
+      localStorage.setItem(STORAGE.mcp, JSON.stringify(mcpServers));
     } catch {
       // Storage unavailable — settings stay in memory for this session.
     }
-  }, [settings, provider, mode, theme, hydrated]);
+  }, [settings, provider, mode, theme, mcpServers, hydrated]);
 
   // Auto-scroll only while the reader is already near the bottom; scrolling up
   // to reread must not be fought by the stream (wordmark's shouldAutoScroll).
@@ -596,11 +661,30 @@ export default function Home() {
     if (threadId === activeId) setActiveId(next[0].id);
   }
 
-  function updateProviderSettings(patch: Partial<{ apiKey: string; model: string }>) {
+  function updateProviderSettings(patch: Partial<ProviderSettings[ProviderId]>) {
     setSettings((current) => ({
       ...current,
       [provider]: { ...current[provider], ...patch },
     }));
+  }
+
+  function currentToolRequest(): ToolRequest {
+    return {
+      webSearch: currentSettings.webSearch,
+      xSearch: currentSettings.xSearch,
+      codeInterpreter: currentSettings.codeInterpreter,
+      fileSearch: currentSettings.fileSearch,
+      vectorStoreIds: currentSettings.vectorStoreId.split(",").map((idValue) => idValue.trim()).filter(Boolean),
+      mcpServers: mcpServers.filter((server) => server.enabled).map(({ label, url }) => ({ label, url })),
+    };
+  }
+
+  function addMcpServer() {
+    const label = mcpDraft.label.trim();
+    const url = mcpDraft.url.trim();
+    if (!MCP_LABEL_PATTERN.test(label) || !isValidMcpUrl(url)) return;
+    setMcpServers((current) => [...current, { id: id(), label, url, enabled: true }]);
+    setMcpDraft({ label: "", url: "" });
   }
 
   // Discover models at runtime — on load, on provider switch, and when the API
@@ -770,22 +854,28 @@ export default function Home() {
           input: requestInput,
           instructions: `${MODE_COPY[activeMode].instructions}\n\n${CONTEXT_GUARDRAIL}`,
           reasoningEffort: reasoning,
+          tools: currentToolRequest(),
         },
         controller.signal,
-        (text) => patchMessage(threadId, assistantId, { content: text }),
+        (text, usedTools) => patchMessage(threadId, assistantId, { content: text, toolActivity: usedTools }),
       );
       if (controller.signal.aborted) {
         // Keep whatever streamed before the stop, including the throttled tail.
         patchMessage(threadId, assistantId, {
           content: outcome.text ? `${outcome.text}\n\n_Generation stopped._` : "Generation stopped.",
+          toolActivity: outcome.toolActivity,
         });
       } else if (outcome.error) {
         patchMessage(threadId, assistantId, {
           content: outcome.text ? `${outcome.text}\n\n${outcome.error}` : outcome.error,
           error: true,
+          toolActivity: outcome.toolActivity,
         });
       } else {
-        patchMessage(threadId, assistantId, { content: outcome.text || "The provider completed without text output." });
+        patchMessage(threadId, assistantId, {
+          content: outcome.text || "The provider completed without text output.",
+          toolActivity: outcome.toolActivity,
+        });
       }
     } finally {
       setStreaming(false);
@@ -810,11 +900,16 @@ export default function Home() {
     const input = toInputMessages(activeThread.messages.slice(0, index));
     if (!input.length) return;
 
-    const snapshot: MessageVariant = { content: target.content, model: target.model, provider: target.provider };
+    const snapshot: MessageVariant = {
+      content: target.content,
+      model: target.model,
+      provider: target.provider,
+      toolActivity: target.toolActivity,
+    };
     const variants = target.variants?.length ? [...target.variants] : [snapshot];
     const requestMode = target.mode ?? mode;
 
-    patchMessage(threadId, messageId, { content: "", error: false, planState: undefined });
+    patchMessage(threadId, messageId, { content: "", error: false, planState: undefined, toolActivity: [] });
     setStreaming(true);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -827,20 +922,27 @@ export default function Home() {
           input,
           instructions: `${MODE_COPY[requestMode].instructions}\n\n${CONTEXT_GUARDRAIL}`,
           reasoningEffort: reasoning,
+          tools: currentToolRequest(),
         },
         controller.signal,
-        (text) => patchMessage(threadId, messageId, { content: text }),
+        (text, usedTools) => patchMessage(threadId, messageId, { content: text, toolActivity: usedTools }),
       );
       if (controller.signal.aborted || outcome.error) {
         patchMessage(threadId, messageId, {
           content: snapshot.content,
           model: snapshot.model,
           provider: snapshot.provider,
+          toolActivity: snapshot.toolActivity,
         });
         if (outcome.error) appendNotice(outcome.error);
       } else {
         const content = outcome.text || "The provider completed without text output.";
-        const variant: MessageVariant = { content, model: currentSettings.model, provider };
+        const variant: MessageVariant = {
+          content,
+          model: currentSettings.model,
+          provider,
+          toolActivity: outcome.toolActivity,
+        };
         patchMessage(threadId, messageId, {
           content,
           model: currentSettings.model,
@@ -848,6 +950,7 @@ export default function Home() {
           variants: [...variants, variant],
           variantIndex: variants.length,
           planState: requestMode === "plan" ? "proposed" : undefined,
+          toolActivity: outcome.toolActivity,
         });
       }
     } finally {
@@ -865,6 +968,7 @@ export default function Home() {
       content: variant.content,
       model: variant.model,
       provider: variant.provider,
+      toolActivity: variant.toolActivity,
       variantIndex: index,
     });
   }
@@ -1146,6 +1250,65 @@ export default function Home() {
                 <select value={reasoning} onChange={(event) => setReasoning(event.target.value)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
                 <small>Sent as the standard Responses API reasoning parameter.</small>
               </label>
+            </div>
+            <div className="tools-section">
+              <span className="overline">PROVIDER TOOLS</span>
+              {TOOL_SUPPORT[provider].webSearch || TOOL_SUPPORT[provider].mcp ? (
+                <>
+                  <div className="tools-grid">
+                    {TOOL_SUPPORT[provider].webSearch && (
+                      <label className="tool-toggle">
+                        <input type="checkbox" checked={currentSettings.webSearch} onChange={(event) => updateProviderSettings({ webSearch: event.target.checked })} />
+                        <span><strong>Web search</strong><small>Provider-managed searches for fresh information</small></span>
+                      </label>
+                    )}
+                    {TOOL_SUPPORT[provider].xSearch && (
+                      <label className="tool-toggle">
+                        <input type="checkbox" checked={currentSettings.xSearch} onChange={(event) => updateProviderSettings({ xSearch: event.target.checked })} />
+                        <span><strong>X search</strong><small>Search X posts through Grok</small></span>
+                      </label>
+                    )}
+                    {TOOL_SUPPORT[provider].codeInterpreter && (
+                      <label className="tool-toggle">
+                        <input type="checkbox" checked={currentSettings.codeInterpreter} onChange={(event) => updateProviderSettings({ codeInterpreter: event.target.checked })} />
+                        <span><strong>Code interpreter</strong><small>Run Python in the provider sandbox</small></span>
+                      </label>
+                    )}
+                    {TOOL_SUPPORT[provider].fileSearch && (
+                      <label className="tool-toggle">
+                        <input type="checkbox" checked={currentSettings.fileSearch} onChange={(event) => updateProviderSettings({ fileSearch: event.target.checked })} />
+                        <span><strong>File search</strong><small>Search vector stores by ID</small></span>
+                      </label>
+                    )}
+                  </div>
+                  {TOOL_SUPPORT[provider].fileSearch && currentSettings.fileSearch && (
+                    <label className="tools-field">
+                      Vector store IDs
+                      <input value={currentSettings.vectorStoreId} onChange={(event) => updateProviderSettings({ vectorStoreId: event.target.value })} placeholder="vs_… (comma-separated)" />
+                    </label>
+                  )}
+                  <div className="mcp-block">
+                    <span className="overline">MCP SERVERS</span>
+                    {mcpServers.map((server) => (
+                      <div className="mcp-row" key={server.id}>
+                        <label>
+                          <input type="checkbox" checked={server.enabled} onChange={(event) => setMcpServers((current) => current.map((item) => item.id === server.id ? { ...item, enabled: event.target.checked } : item))} />
+                          <span><strong>{server.label}</strong><small>{server.url}</small></span>
+                        </label>
+                        <button className="icon-button" onClick={() => setMcpServers((current) => current.filter((item) => item.id !== server.id))} aria-label={`Remove ${server.label}`}><Icon name="trash" size={13} /></button>
+                      </div>
+                    ))}
+                    <div className="mcp-add">
+                      <input value={mcpDraft.label} onChange={(event) => setMcpDraft((current) => ({ ...current, label: event.target.value }))} placeholder="label" aria-label="MCP server label" />
+                      <input value={mcpDraft.url} onChange={(event) => setMcpDraft((current) => ({ ...current, url: event.target.value }))} placeholder="https://host/mcp" aria-label="MCP server URL" />
+                      <button onClick={addMcpServer} disabled={!MCP_LABEL_PATTERN.test(mcpDraft.label.trim()) || !isValidMcpUrl(mcpDraft.url.trim())}>Add</button>
+                    </div>
+                    <small className="mcp-note">Remote servers run provider-side with approval set to “never” — only add servers you trust.</small>
+                  </div>
+                </>
+              ) : (
+                <p className="tools-empty">Server-side tools are not available for local providers — {currentProvider.name} receives plain Responses requests.</p>
+              )}
             </div>
             <div className="connection-row">
               <button className="test-button" onClick={() => setModelsRefresh((count) => count + 1)}><Icon name="refresh" size={15} /> Refresh models</button>

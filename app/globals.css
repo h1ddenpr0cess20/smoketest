@@ -178,6 +178,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .app-shell[data-theme="smoke"] .export-formats button { background: #e9e9e3; border-color: #c4c7c0; color: #4f554f; }
 .app-shell[data-theme="smoke"] .export-formats button.on { border-color: var(--mint); color: var(--mint); background: rgba(62,116,91,.07); }
 .app-shell[data-theme="ember"] .export-go { color: #241108; }
+.app-shell[data-theme="smoke"] .tools-section { border-top-color: #d1d3cc; }
+.app-shell[data-theme="smoke"] .tool-toggle,
+.app-shell[data-theme="smoke"] .mcp-row { background: #f5f4ee; border-color: #caccc5; }
+.app-shell[data-theme="smoke"] .tool-toggle strong,
+.app-shell[data-theme="smoke"] .mcp-row strong { color: #3a403a; }
+.app-shell[data-theme="smoke"] .tools-field { color: #515751; }
+.app-shell[data-theme="smoke"] .tools-field input,
+.app-shell[data-theme="smoke"] .mcp-add input { background: #e9e9e3; border-color: #c4c7c0; color: #2d322d; }
+.app-shell[data-theme="smoke"] .mcp-add button { background: #e8e8e2; border-color: #c7cac3; color: #4f554f; }
 .app-shell[data-theme="ember"] .plan-actions button { color: #241108; }
 .thinking { display: flex; align-items: center; gap: 4px; color: #656b64; }
 .thinking span { width: 4px; height: 4px; border-radius: 50%; background: var(--mint); animation: pulse 1.2s ease-in-out infinite; }
@@ -236,6 +245,27 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .settings-form input:focus, .settings-form select:focus { border-color: #647168; }
 .settings-form input[readonly] { color: #747b74; }
 .settings-form label small { display: block; margin-top: 5px; color: #555b55; font: 8px/1.4 ui-monospace, monospace; font-weight: 400; }
+.tool-activity { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.tool-activity span { color: var(--mint); border: 1px solid color-mix(in srgb, var(--mint) 25%, transparent); background: color-mix(in srgb, var(--mint) 6%, transparent); border-radius: 5px; padding: 5px 8px; font: 9px ui-monospace, monospace; }
+.tools-section { display: grid; gap: 10px; margin-top: 20px; padding-top: 18px; border-top: 1px solid #292d2a; }
+.tools-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.tool-toggle { display: flex; align-items: flex-start; gap: 9px; border: 1px solid #2d312e; border-radius: 6px; background: #151715; padding: 9px 10px; cursor: pointer; }
+.tool-toggle input, .mcp-row input[type="checkbox"] { accent-color: var(--mint); margin-top: 2px; }
+.tool-toggle strong { display: block; color: #c6c9c2; font-size: 10px; font-weight: 600; }
+.tool-toggle small, .mcp-row small { display: block; margin-top: 3px; color: #666c65; font: 8px/1.4 ui-monospace, monospace; overflow-wrap: anywhere; }
+.tools-field { display: block; color: #aeb2ab; font-size: 10px; font-weight: 600; }
+.tools-field input { width: 100%; height: 36px; margin-top: 6px; border: 1px solid #343a35; border-radius: 5px; outline: 0; background: #0f110f; color: #d9dad5; padding: 0 10px; font: 10px ui-monospace, monospace; }
+.mcp-block { display: grid; gap: 7px; margin-top: 4px; }
+.mcp-row { display: flex; align-items: center; gap: 8px; border: 1px solid #2d312e; border-radius: 6px; background: #151715; padding: 8px 6px 8px 10px; }
+.mcp-row label { flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 9px; cursor: pointer; }
+.mcp-row strong { display: block; color: #c6c9c2; font-size: 10px; font-weight: 600; }
+.mcp-add { display: grid; grid-template-columns: 1fr 2fr auto; gap: 6px; }
+.mcp-add input { height: 34px; border: 1px solid #343a35; border-radius: 5px; outline: 0; background: #0f110f; color: #d9dad5; padding: 0 9px; font: 10px ui-monospace, monospace; }
+.mcp-add button { border: 1px solid #3a413b; border-radius: 5px; background: #1b1e1b; color: #c0c4bd; padding: 0 13px; font-size: 9px; font-weight: 700; cursor: pointer; }
+.mcp-add button:hover:not(:disabled) { border-color: #5c675f; }
+.mcp-add button:disabled { opacity: .35; cursor: default; }
+.mcp-note { color: #6a706a; font: 8px/1.5 ui-monospace, monospace; }
+.tools-empty { margin: 0; color: #7d837b; font: 9px/1.55 ui-monospace, monospace; }
 .connection-row { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
 .test-button { display: flex; align-items: center; gap: 7px; border: 1px solid #3a413b; border-radius: 5px; background: #1b1e1b; color: #c0c4bd; padding: 9px 11px; font-size: 9px; cursor: pointer; }
 .test-button:hover { border-color: #5c675f; }

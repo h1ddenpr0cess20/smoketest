@@ -5,6 +5,7 @@ import {
   providerEndpoint,
   PROVIDERS,
 } from "@/lib/providers";
+import { buildTools, isValidMcpUrl, MCP_LABEL_PATTERN, type ToolRequest } from "@/lib/tools";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,7 +17,52 @@ type RequestBody = {
   input?: unknown;
   instructions?: unknown;
   reasoningEffort?: unknown;
+  tools?: unknown;
 };
+
+const MAX_MCP_SERVERS = 8;
+const MAX_VECTOR_STORES = 5;
+
+// Only well-formed toggles, vector-store ids, and MCP endpoints survive;
+// the tools array itself is always constructed server-side by buildTools.
+function sanitizeToolRequest(value: unknown): ToolRequest {
+  if (!value || typeof value !== "object") return {};
+  const raw = value as {
+    webSearch?: unknown;
+    xSearch?: unknown;
+    codeInterpreter?: unknown;
+    fileSearch?: unknown;
+    vectorStoreIds?: unknown;
+    mcpServers?: unknown;
+  };
+  const vectorStoreIds = Array.isArray(raw.vectorStoreIds)
+    ? raw.vectorStoreIds
+        .filter((id): id is string => typeof id === "string" && Boolean(id.trim()))
+        .slice(0, MAX_VECTOR_STORES)
+    : [];
+  const mcpServers = Array.isArray(raw.mcpServers)
+    ? raw.mcpServers
+        .filter(
+          (server): server is { label: string; url: string } =>
+            Boolean(server) &&
+            typeof server === "object" &&
+            typeof (server as { label?: unknown }).label === "string" &&
+            MCP_LABEL_PATTERN.test((server as { label: string }).label) &&
+            typeof (server as { url?: unknown }).url === "string" &&
+            isValidMcpUrl((server as { url: string }).url),
+        )
+        .map(({ label, url }) => ({ label, url }))
+        .slice(0, MAX_MCP_SERVERS)
+    : [];
+  return {
+    webSearch: raw.webSearch === true,
+    xSearch: raw.xSearch === true,
+    codeInterpreter: raw.codeInterpreter === true,
+    fileSearch: raw.fileSearch === true,
+    vectorStoreIds,
+    mcpServers,
+  };
+}
 
 type InputMessage = { role: "user" | "assistant"; content: string };
 
@@ -69,6 +115,8 @@ export async function POST(request: NextRequest) {
   if (["low", "medium", "high"].includes(effort)) {
     upstreamBody.reasoning = { effort };
   }
+  const tools = buildTools(provider, sanitizeToolRequest(body.tools));
+  if (tools.length) upstreamBody.tools = tools;
   // The transcript is re-sent in full every turn, so server-side response
   // storage is never used. Only OpenAI documents `store`; leave others alone.
   if (provider === "openai") upstreamBody.store = false;

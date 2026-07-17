@@ -14,6 +14,7 @@ export type MessageVariant = {
   content: string;
   model?: string;
   provider?: ProviderId;
+  toolActivity?: string[];
 };
 
 export type Message = {
@@ -29,6 +30,7 @@ export type Message = {
   planState?: "proposed" | "approved" | "changes_requested";
   variants?: MessageVariant[];
   variantIndex?: number;
+  toolActivity?: string[];
 };
 
 export type Thread = {
@@ -39,7 +41,21 @@ export type Thread = {
   messages: Message[];
 };
 
-export type ProviderSettings = Record<
-  ProviderId,
-  { apiKey: string; model: string }
->;
+export type ProviderConfig = {
+  apiKey: string;
+  model: string;
+  webSearch: boolean;
+  xSearch: boolean;
+  codeInterpreter: boolean;
+  fileSearch: boolean;
+  vectorStoreId: string;
+};
+
+export type ProviderSettings = Record<ProviderId, ProviderConfig>;
+
+export type McpServerEntry = {
+  id: string;
+  label: string;
+  url: string;
+  enabled: boolean;
+};
