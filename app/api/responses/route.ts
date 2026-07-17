@@ -4,6 +4,7 @@ import {
   isProviderId,
   providerEndpoint,
   PROVIDERS,
+  supportsReasoning,
 } from "@/lib/providers";
 
 export const runtime = "nodejs";
@@ -48,15 +49,19 @@ export async function POST(request: NextRequest) {
     stream: true,
   };
   if (instructions) upstreamBody.instructions = instructions;
-  if (provider !== "ollama" && ["low", "medium", "high"].includes(String(body.reasoningEffort))) {
-    upstreamBody.reasoning = { effort: body.reasoningEffort };
+  const effort = String(body.reasoningEffort);
+  if (["low", "medium", "high"].includes(effort) && supportsReasoning(provider, model)) {
+    upstreamBody.reasoning = { effort };
   }
+  // The transcript is re-sent in full every turn, so server-side response
+  // storage is never used. Only OpenAI documents `store`; leave others alone.
+  if (provider === "openai") upstreamBody.store = false;
 
   let upstream: Response;
   try {
     upstream = await fetch(providerEndpoint(provider, "responses"), {
       method: "POST",
-      headers: authorizationHeaders(provider, apiKey),
+      headers: { ...authorizationHeaders(provider, apiKey), Accept: "text/event-stream" },
       body: JSON.stringify(upstreamBody),
       signal: request.signal,
       cache: "no-store",
