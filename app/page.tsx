@@ -317,13 +317,13 @@ export default function Home() {
   const currentApiKey = currentSettings.apiKey;
   useEffect(() => {
     if (!hydrated) return;
-    if (PROVIDERS[provider].apiKeyRequired && !currentApiKey.trim()) {
-      setModels([]);
-      setModelStatus("Add an API key to load models");
-      return;
-    }
     const seq = ++discoverSeq.current;
     const timer = setTimeout(async () => {
+      if (PROVIDERS[provider].apiKeyRequired && !currentApiKey.trim()) {
+        setModels([]);
+        setModelStatus("Add an API key to load models");
+        return;
+      }
       setModelStatus("Checking connection…");
       try {
         const response = await fetch("/api/models", {
