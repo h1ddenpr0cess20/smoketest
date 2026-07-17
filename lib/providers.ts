@@ -69,26 +69,6 @@ export function providerEndpoint(provider: ProviderId, resource: "responses" | "
   return `${PROVIDERS[provider].baseUrl}/${resource}`;
 }
 
-// xAI's Responses endpoint rejects the `reasoning` parameter outright; every
-// other supported provider accepts it (subject to the model-level check below).
-export function serviceSupportsReasoning(provider: ProviderId) {
-  return provider !== "xai";
-}
-
-// GPT-4-era models reject a reasoning-effort parameter; Grok models accept it
-// only on "fast" variants; everything else accepts it.
-export function modelSupportsReasoningEffort(model: string) {
-  const normalized = model.trim().toLowerCase();
-  if (!normalized) return true;
-  if (normalized.startsWith("gpt-4")) return false;
-  if (normalized.startsWith("grok")) return normalized.includes("fast");
-  return true;
-}
-
-export function supportsReasoning(provider: ProviderId, model: string) {
-  return serviceSupportsReasoning(provider) && modelSupportsReasoningEffort(model);
-}
-
 export function authorizationHeaders(provider: ProviderId, apiKey: string) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (apiKey.trim()) headers.Authorization = `Bearer ${apiKey.trim()}`;

@@ -12,7 +12,7 @@ import {
   outputTextFromJson,
   parseSseBlock,
 } from "@/lib/stream";
-import { PROVIDERS, PROVIDER_IDS, serviceSupportsReasoning, type ProviderId } from "@/lib/providers";
+import { PROVIDERS, PROVIDER_IDS, type ProviderId } from "@/lib/providers";
 import type { Attachment, Message, Mode, ProviderSettings, Thread } from "@/lib/types";
 
 const STORAGE = {
@@ -675,8 +675,8 @@ export default function Home() {
               </label>
               <label>
                 Reasoning effort
-                <select value={reasoning} disabled={!serviceSupportsReasoning(provider)} onChange={(event) => setReasoning(event.target.value)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
-                <small>{serviceSupportsReasoning(provider) ? "Sent when the model accepts the standard reasoning parameter." : "xAI's Responses endpoint rejects the reasoning parameter, so it is not sent."}</small>
+                <select value={reasoning} onChange={(event) => setReasoning(event.target.value)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
+                <small>Sent as the standard Responses API reasoning parameter.</small>
               </label>
             </div>
             <div className="connection-row">

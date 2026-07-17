@@ -4,7 +4,6 @@ import {
   isProviderId,
   providerEndpoint,
   PROVIDERS,
-  supportsReasoning,
 } from "@/lib/providers";
 
 export const runtime = "nodejs";
@@ -50,7 +49,7 @@ export async function POST(request: NextRequest) {
   };
   if (instructions) upstreamBody.instructions = instructions;
   const effort = String(body.reasoningEffort);
-  if (["low", "medium", "high"].includes(effort) && supportsReasoning(provider, model)) {
+  if (["low", "medium", "high"].includes(effort)) {
     upstreamBody.reasoning = { effort };
   }
   // The transcript is re-sent in full every turn, so server-side response
