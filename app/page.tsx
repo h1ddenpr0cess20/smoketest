@@ -695,8 +695,18 @@ export default function Home() {
               </label>
               <label>
                 Model
-                <input list="available-models" value={currentSettings.model} onChange={(event) => updateProviderSettings({ model: event.target.value })} placeholder="Model identifier" />
-                <datalist id="available-models">{models.map((model) => <option key={model} value={model} />)}</datalist>
+                {models.length ? (
+                  <select value={currentSettings.model} onChange={(event) => updateProviderSettings({ model: event.target.value })}>
+                    {!currentSettings.model && <option value="" disabled>Choose a model…</option>}
+                    {currentSettings.model && !models.includes(currentSettings.model) && (
+                      <option value={currentSettings.model}>{currentSettings.model} (not on server)</option>
+                    )}
+                    {models.map((model) => <option key={model} value={model}>{model}</option>)}
+                  </select>
+                ) : (
+                  <input value={currentSettings.model} onChange={(event) => updateProviderSettings({ model: event.target.value })} placeholder="Model identifier" />
+                )}
+                <small>{models.length ? "Loaded from the provider's /v1/models." : "Type a model id, or connect to load the list."}</small>
               </label>
               <label>
                 Reasoning effort
