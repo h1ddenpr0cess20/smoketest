@@ -36,6 +36,14 @@ export type EmbedFn = (
 type ThreadIndex = {
   chunks: StoredDocChunk[];
   /**
+   * Set once a restore has settled (with chunks or empty). Threads with no
+   * attached documents legitimately restore to an empty array, so this must
+   * be tracked separately from `chunks.length` — otherwise every call for
+   * such a thread (every send, every attach, every thread switch) would
+   * treat it as never-restored and re-hit IndexedDB.
+   */
+  restored: boolean;
+  /**
    * Monotonic token for index restores. A restore captures it before awaiting
    * IndexedDB and bails out if it changed, so a slow load for a previously
    * opened thread can't dump its chunks into the thread that is now active
@@ -50,7 +58,7 @@ const indexes = new Map<string, ThreadIndex>();
 function getIndex(threadId: string): ThreadIndex {
   let index = indexes.get(threadId);
   if (!index) {
-    index = { chunks: [], restoreToken: 0, activeRestore: null };
+    index = { chunks: [], restored: false, restoreToken: 0, activeRestore: null };
     indexes.set(threadId, index);
   }
   return index;
@@ -101,13 +109,13 @@ async function persistLocalDocIndex(threadId: string): Promise<void> {
 }
 
 /**
- * Loads the persisted chunks for a thread into memory (a no-op once loaded or
- * when a restore is already in flight). Returns the restored chunk count.
+ * Loads the persisted chunks for a thread into memory (a no-op once restored
+ * or when a restore is already in flight). Returns the restored chunk count.
  */
 export function restoreLocalDocIndex(threadId: string): Promise<number> {
   const index = getIndex(threadId);
   if (index.activeRestore) return index.activeRestore;
-  if (index.chunks.length > 0) return Promise.resolve(index.chunks.length);
+  if (index.restored) return Promise.resolve(index.chunks.length);
 
   const token = ++index.restoreToken;
   const operation = (async () => {
@@ -119,6 +127,7 @@ export function restoreLocalDocIndex(threadId: string): Promise<number> {
     }
     if (token !== index.restoreToken) return index.chunks.length;
     index.chunks = chunks;
+    index.restored = true;
     return index.chunks.length;
   })();
   index.activeRestore = operation;
@@ -138,6 +147,7 @@ export async function branchLocalDocIndex(
   if (source.chunks.length === 0) return;
   const target = getIndex(targetThreadId);
   target.chunks = source.chunks.map((chunk) => ({ ...chunk }));
+  target.restored = true;
   await persistLocalDocIndex(targetThreadId);
 }
 
