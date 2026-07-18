@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   title: "smoketest — cross-provider coding assistant",
   description:
     "A focused coding assistant for Responses API compatible providers.",
+  icons: { icon: "/icon.svg" },
 };
 
 export const viewport: Viewport = {

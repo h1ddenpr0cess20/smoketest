@@ -1,5 +1,11 @@
 # smoketest
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./public/logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="./public/logo-light.svg">
+  <img alt="smoketest — cross-provider coding assistant" src="./public/logo-light.svg">
+</picture>
+
 A focused, cross-provider coding assistant built around one protocol: the OpenAI Responses API.
 
 > [!IMPORTANT]

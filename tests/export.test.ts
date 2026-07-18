@@ -31,15 +31,35 @@ describe("session export", () => {
   it("renders markdown with speakers and skips empty messages", () => {
     const output = renderExport(thread, "md");
     expect(output).toContain("# Fix the parser!");
-    expect(output).toContain("## You");
-    expect(output).toContain("## smoketest (gpt-5.6)");
-    expect(output.match(/^## /gm)).toHaveLength(2);
+    expect(output).toContain("### You");
+    expect(output).toContain("### smoketest (gpt-5.6)");
+    expect(output.match(/^### /gm)).toHaveLength(2);
   });
 
   it("escapes HTML content", () => {
     const output = renderExport(thread, "html");
     expect(output).toContain("&lt;script&gt;");
     expect(output).not.toContain("<script>alert");
+    expect(output).toContain('class="message user"');
+    expect(output).toContain('class="content"');
+  });
+
+  it("renders markdown and the selected theme in HTML", () => {
+    const markdownThread: Thread = {
+      ...thread,
+      messages: [
+        {
+          ...thread.messages[0],
+          content: "## Heading\n\n**bold** and `code`\n\n- one\n- two",
+        },
+      ],
+    };
+    const output = renderExport(markdownThread, "html", "ember");
+    expect(output).toContain("<h2>Heading</h2>");
+    expect(output).toContain("<strong>bold</strong>");
+    expect(output).toContain("<code>code</code>");
+    expect(output).toContain("<li>one</li>");
+    expect(output).toContain("--page:#0c0e0d");
   });
 
   it("escapes CSV quotes and keeps newlines quoted", () => {
@@ -48,6 +68,14 @@ describe("session export", () => {
     expect(output.split("\n")[0]).toBe(
       "timestamp,role,provider,model,mode,content",
     );
+  });
+
+  it("neutralizes spreadsheet formulas in CSV", () => {
+    const formulaThread: Thread = {
+      ...thread,
+      messages: [{ ...thread.messages[0], content: "=SUM(A1:A2)" }],
+    };
+    expect(renderExport(formulaThread, "csv")).toContain('"\'=SUM(A1:A2)"');
   });
 
   it("round-trips JSON", () => {
