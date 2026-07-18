@@ -7,6 +7,10 @@ export type Attachment = {
   name: string;
   content: string;
   size: number;
+  // Directory uploads routed into the local RAG index keep their text in
+  // IndexedDB only; the attachment carries no content so threads (which are
+  // persisted to localStorage) stay small.
+  indexedOnly?: boolean;
 };
 
 // A retained previous version of a regenerated assistant reply.

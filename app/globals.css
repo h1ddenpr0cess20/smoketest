@@ -1229,20 +1229,24 @@ select:focus-visible {
   transform: translateY(-1px);
 }
 .composer-send {
-  color: var(--accent-ink);
-  background: var(--accent);
+  color: var(--accent);
+  background: transparent;
 }
 .composer-send:hover:not(:disabled) {
+  background: var(--accent-soft);
   transform: translateX(1px);
 }
 .composer-send:disabled {
-  opacity: 0.3;
+  opacity: 0.32;
   cursor: default;
 }
 .composer-send.is-stop {
   color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  background: transparent;
   transform: none;
+}
+.composer-send.is-stop:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 .composer-foot {
   width: min(840px, 100%);

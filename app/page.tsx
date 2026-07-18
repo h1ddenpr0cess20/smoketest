@@ -43,14 +43,17 @@ const STORAGE = {
   reasoning: "smoketest.reasoning.v1",
 } as const;
 
-// Attachment ingestion limits. Individual picks stay small; directory uploads
-// are wider but bounded so a dropped monorepo can't blow the localStorage
-// budget that threads (attachments included) are persisted under.
+// Attachment ingestion limits. Directory trees routed into the local RAG
+// index live in IndexedDB, so they get a wide budget; directory uploads that
+// must be inlined into the prompt (cloud provider or RAG off) stay tight
+// because every byte lands in the request and in localStorage.
 const MAX_SINGLE_FILES = 16;
-const MAX_DIRECTORY_FILES = 120;
+const MAX_DIRECTORY_FILES_RAG = 1000;
+const MAX_DIRECTORY_FILES_INLINE = 120;
 const MAX_FILE_BYTES = 512_000;
 const MAX_EXTRACTED_CHARS = 200_000;
-const MAX_DIRECTORY_TOTAL_CHARS = 2_000_000;
+const MAX_DIRECTORY_RAG_CHARS = 8_000_000;
+const MAX_DIRECTORY_INLINE_CHARS = 2_000_000;
 
 const MODE_COPY: Record<Mode, { label: string; mark: string; description: string; instructions: string }> = {
   ask: {
@@ -200,11 +203,34 @@ function toInputMessages(messages: Message[]) {
 }
 
 function buildInput(messages: Message[], next: string, attachments: Attachment[]) {
+  // Indexed-only attachments (directory trees living in the RAG index) carry
+  // no inline text.
   const files = attachments
+    .filter((file) => file.content.trim())
     .map((file) => `--- ${file.name} ---\n${file.content}\n--- end ${file.name} ---`)
     .join("\n\n");
   const content = files ? `ATTACHED CODE CONTEXT (read-only):\n${files}\n\n${next}` : next;
   return [...toInputMessages(messages), { role: "user" as const, content }];
+}
+
+// Collapses a flat attachment list for display: files from one directory
+// upload (names share a top path segment) become a single "dir/ · N files"
+// chip instead of hundreds of spans.
+function groupAttachments(files: Attachment[]) {
+  const groups = new Map<string, { label: string; ids: string[] }>();
+  const order: string[] = [];
+  for (const file of files) {
+    const slash = file.name.indexOf("/");
+    const key = slash > 0 ? `dir:${file.name.slice(0, slash)}` : file.id;
+    let group = groups.get(key);
+    if (!group) {
+      group = { label: slash > 0 ? `${file.name.slice(0, slash)}/` : file.name, ids: [] };
+      groups.set(key, group);
+      order.push(key);
+    }
+    group.ids.push(file.id);
+  }
+  return order.map((key) => ({ key, ...groups.get(key)! }));
 }
 
 async function copyText(text: string) {
@@ -419,7 +445,7 @@ function Icon({ name, size = 18 }: { name: "plus" | "settings" | "paperclip" | "
     plus: <><path d="M12 5v14M5 12h14" /></>,
     settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></>,
     paperclip: <path d="m20.5 11.5-8.8 8.8a6 6 0 0 1-8.5-8.5l9.5-9.5a4 4 0 0 1 5.7 5.7l-9.6 9.5A2 2 0 0 1 6 14.7l8.8-8.8" />,
-    send: <><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></>,
+    send: <><path d="M22 12 3 4.5l3.4 7.5L3 19.5 22 12z" /><path d="M6.4 12H22" /></>,
     stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
     menu: <><path d="M4 7h16M4 12h16M4 17h16" /></>,
     trash: <><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6" /></>,
@@ -583,7 +609,13 @@ const MessageView = memo(function MessageView({
           {message.role === "assistant" && <><span>·</span><span>{message.model}</span></>}
         </div>
         {message.attachments?.length ? (
-          <div className="message-files">{message.attachments.map((file) => <span key={file.id}>@{file.name}</span>)}</div>
+          <div className="message-files">
+            {groupAttachments(message.attachments).map((group) => (
+              <span key={group.key}>
+                @{group.ids.length > 1 ? `${group.label} · ${group.ids.length} files` : group.label}
+              </span>
+            ))}
+          </div>
         ) : null}
         {message.toolActivity?.length ? (
           <div className="tool-activity" aria-label="Tool activity">
@@ -913,8 +945,26 @@ export default function Home() {
   async function ingestFiles(files: File[], fromDirectory: boolean) {
     if (!files.length || !activeThread) return;
     const threadId = activeThread.id;
-    const limit = fromDirectory ? MAX_DIRECTORY_FILES : MAX_SINGLE_FILES;
+    // Directory trees headed for the RAG index get a wide budget (their text
+    // lives in IndexedDB); inline-bound directories stay tight because every
+    // byte lands in the prompt and localStorage.
+    const embeddingModel =
+      currentProvider.local && currentSettings.localRag
+        ? resolveEmbeddingModel(currentSettings.embeddingModel, models)
+        : null;
+    const indexedOnly = fromDirectory && Boolean(embeddingModel);
+    const limit = fromDirectory
+      ? indexedOnly
+        ? MAX_DIRECTORY_FILES_RAG
+        : MAX_DIRECTORY_FILES_INLINE
+      : MAX_SINGLE_FILES;
+    const charBudget = fromDirectory
+      ? indexedOnly
+        ? MAX_DIRECTORY_RAG_CHARS
+        : MAX_DIRECTORY_INLINE_CHARS
+      : Number.POSITIVE_INFINITY;
     const next: Attachment[] = [];
+    const docs: { name: string; text: string }[] = [];
     let skipped = 0;
     let totalChars = 0;
     for (const file of files) {
@@ -936,12 +986,19 @@ export default function Home() {
           continue;
         }
         if (text.length > MAX_EXTRACTED_CHARS) text = text.slice(0, MAX_EXTRACTED_CHARS);
-        if (fromDirectory && totalChars + text.length > MAX_DIRECTORY_TOTAL_CHARS) {
+        if (totalChars + text.length > charBudget) {
           skipped++;
           continue;
         }
         totalChars += text.length;
-        next.push({ id: id(), name, size: file.size, content: text });
+        docs.push({ name, text });
+        next.push({
+          id: id(),
+          name,
+          size: file.size,
+          content: indexedOnly ? "" : text,
+          indexedOnly: indexedOnly || undefined,
+        });
       } catch {
         skipped++;
       }
@@ -958,14 +1015,12 @@ export default function Home() {
         : null,
     );
 
-    if (next.length && currentProvider.local && currentSettings.localRag) {
-      const embeddingModel = resolveEmbeddingModel(currentSettings.embeddingModel, models);
-      if (!embeddingModel) return;
-      setRagStatus({ threadId, text: `Indexing ${next.length} file${next.length === 1 ? "" : "s"}…` });
+    if (docs.length && embeddingModel) {
+      setRagStatus({ threadId, text: `Indexing ${docs.length} file${docs.length === 1 ? "" : "s"}…` });
       try {
         const result = await indexDocuments(
           threadId,
-          next.map((file) => ({ name: file.name, text: file.content })),
+          docs,
           embeddingModel,
           makeEmbed(provider, currentSettings.apiKey, embeddingModel),
         );
@@ -1196,7 +1251,7 @@ export default function Home() {
             }
           } catch {
             if (controller.signal.aborted) {
-              patchMessage(threadId, assistantId, { content: "Generation stopped." });
+              patchMessage(threadId, assistantId, { content: "Generation stopped.", planState: undefined });
               return;
             }
             // Retrieval is best-effort; the inline-attachment input stands.
@@ -1221,16 +1276,20 @@ export default function Home() {
       );
       const finalActivity = [...ragLabels, ...outcome.toolActivity];
       if (controller.signal.aborted) {
-        // Keep whatever streamed before the stop, including the throttled tail.
+        // Keep whatever streamed before the stop, including the throttled
+        // tail. A stopped or failed plan is incomplete — never offer the
+        // approve/revise actions on it.
         patchMessage(threadId, assistantId, {
           content: outcome.text ? `${outcome.text}\n\n_Generation stopped._` : "Generation stopped.",
           toolActivity: finalActivity,
+          planState: undefined,
         });
       } else if (outcome.error) {
         patchMessage(threadId, assistantId, {
           content: outcome.text ? `${outcome.text}\n\n${outcome.error}` : outcome.error,
           error: true,
           toolActivity: finalActivity,
+          planState: undefined,
         });
       } else {
         patchMessage(threadId, assistantId, {
@@ -1592,18 +1651,22 @@ export default function Home() {
             )}
             {attachments.length > 0 && (
               <div className="composer-files">
-                {attachments.map((file) => (
-                  <span key={file.id} title={file.name}>
-                    @{file.name}
-                    <button
-                      type="button"
-                      onClick={() => setAttachments((current) => current.filter((item) => item.id !== file.id))}
-                      aria-label={`Remove ${file.name}`}
-                    >
-                      <Icon name="close" size={12} />
-                    </button>
-                  </span>
-                ))}
+                {groupAttachments(attachments).map((group) => {
+                  const ids = new Set(group.ids);
+                  const label = group.ids.length > 1 ? `${group.label} · ${group.ids.length} files` : group.label;
+                  return (
+                    <span key={group.key} title={label}>
+                      @{label}
+                      <button
+                        type="button"
+                        onClick={() => setAttachments((current) => current.filter((item) => !ids.has(item.id)))}
+                        aria-label={`Remove ${group.label}`}
+                      >
+                        <Icon name="close" size={12} />
+                      </button>
+                    </span>
+                  );
+                })}
               </div>
             )}
             <textarea
