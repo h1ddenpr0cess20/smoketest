@@ -70,6 +70,13 @@ describe("estimateActiveHistoryTokens", () => {
     ];
     expect(estimateActiveHistoryTokens(messages, undefined, undefined)).toBe(0);
   });
+
+  it("ignores UI notices in the tail", () => {
+    const messages = [
+      { ...message("1", "assistant", "Compacted 5 messages."), notice: true },
+    ];
+    expect(estimateActiveHistoryTokens(messages, undefined, undefined)).toBe(0);
+  });
 });
 
 describe("buildCompactionRequestContent", () => {
@@ -99,5 +106,15 @@ describe("buildCompactionRequestContent", () => {
     const content = buildCompactionRequestContent(undefined, tail);
     expect(content).toContain("User: kept");
     expect(content).not.toContain("broken");
+  });
+
+  it("omits UI notices from the transcript", () => {
+    const tail = [
+      { ...message("1", "assistant", "Web search enabled."), notice: true },
+      message("2", "user", "kept"),
+    ];
+    const content = buildCompactionRequestContent(undefined, tail);
+    expect(content).toContain("User: kept");
+    expect(content).not.toContain("Web search enabled.");
   });
 });

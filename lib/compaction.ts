@@ -27,7 +27,7 @@ export function estimateActiveHistoryTokens(
   compactedThroughId: string | undefined,
 ): number {
   const tail = uncompactedMessages(messages, compactedThroughId).filter(
-    (message) => message.content.trim() && !message.error,
+    (message) => message.content.trim() && !message.error && !message.notice,
   );
   const tailTokens = tail.reduce(
     (sum, message) => sum + estimateMessageTokens(message),
@@ -56,7 +56,9 @@ export function buildCompactionRequestContent(
     );
   }
   const transcript = tail
-    .filter((message) => message.content.trim() && !message.error)
+    .filter(
+      (message) => message.content.trim() && !message.error && !message.notice,
+    )
     .map(
       (message) =>
         `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`,

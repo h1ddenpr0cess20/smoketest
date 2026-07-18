@@ -407,7 +407,7 @@ function buildInstructions(mode: Mode, compactedSummary: string | undefined) {
 // turn structure models are trained on.
 function toInputMessages(messages: Message[], provider: ProviderId) {
   const relevant = messages.filter(
-    (message) => message.content.trim() && !message.error,
+    (message) => message.content.trim() && !message.error && !message.notice,
   );
   return windowMessagesByTokenBudget(
     relevant,
@@ -1962,6 +1962,7 @@ export default function Home() {
       content,
       createdAt: timestamp(),
       error: isError,
+      notice: true,
     };
     setThreads((current) =>
       current.map((thread) =>
@@ -2528,7 +2529,7 @@ export default function Home() {
       thread.compactedThroughId,
     );
     const foldable = tail.filter(
-      (message) => message.content.trim() && !message.error,
+      (message) => message.content.trim() && !message.error && !message.notice,
     );
     if (!foldable.length) return null;
     if (
@@ -2853,6 +2854,7 @@ export default function Home() {
                   (message) =>
                     message.role === "assistant" &&
                     !message.error &&
+                    !message.notice &&
                     message.content,
                 );
               const latestPlan =
@@ -3041,6 +3043,8 @@ export default function Home() {
       content: target.content,
       model: target.model,
       provider: target.provider,
+      mode: target.mode,
+      planState: target.planState,
       toolActivity: target.toolActivity,
       generatedFiles: target.generatedFiles,
     };
@@ -3088,6 +3092,8 @@ export default function Home() {
           content: snapshot.content,
           model: snapshot.model,
           provider: snapshot.provider,
+          mode: snapshot.mode,
+          planState: snapshot.planState,
           toolActivity: snapshot.toolActivity,
           generatedFiles: snapshot.generatedFiles,
         });
@@ -3097,6 +3103,8 @@ export default function Home() {
           outcome.text || "The provider completed without text output.";
         const variant: MessageVariant = {
           content,
+          mode: requestMode,
+          planState: requestMode === "plan" ? "proposed" : undefined,
           model: currentSettings.model,
           provider,
           toolActivity: outcome.toolActivity,
@@ -3132,6 +3140,8 @@ export default function Home() {
       content: variant.content,
       model: variant.model,
       provider: variant.provider,
+      mode: variant.mode,
+      planState: variant.planState,
       toolActivity: variant.toolActivity,
       generatedFiles: variant.generatedFiles,
       variantIndex: index,
@@ -3204,9 +3214,14 @@ export default function Home() {
       patchMessage(activeThread.id, messageId, { planState: "approved" });
       stopRoundtable("stopped");
       setMode("build");
+      // The empty attachment override keeps the approval turn from silently
+      // consuming whatever is sitting in the composer — files staged there
+      // (and the in-progress draft) belong to the user's next message, and
+      // the thread's existing attachments are re-inlined from history anyway.
       void submit(
         "Implement the approved plan. Complete the work and verify it.",
         "build",
+        [],
       );
     },
     revise: (messageId) => {
