@@ -665,7 +665,12 @@ const MessageView = memo(function MessageView({
             )}
           </div>
         ) : null}
-        {message.role === "assistant" && message.mode === "plan" && message.planState && !message.error && message.content ? (
+        {message.role === "assistant" &&
+        message.mode === "plan" &&
+        message.planState &&
+        !message.error &&
+        message.content &&
+        !isStreaming ? (
           <div className="plan-actions" aria-label="Plan approval">
             {message.planState === "proposed" ? (
               <>
