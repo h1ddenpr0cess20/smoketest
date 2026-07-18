@@ -20,11 +20,27 @@ smoketest supports four Responses API-compatible targets:
 
 There are no Chat Completions adapters and no provider SDKs. The app sends the same minimal Responses request shape to every provider and consumes standard Responses streaming events.
 
+## Screenshots
+
+Conversation view in the Smoke (light) theme:
+
+![Conversation in the Smoke theme](./docs/screenshots/conversation-smoke.png)
+
+The same session in the Ember (dark) theme:
+
+![Conversation in the Ember theme](./docs/screenshots/conversation-ember.png)
+
+Roundtable planning, where several model participants plan a change together:
+
+![Roundtable planning setup](./docs/screenshots/roundtable-setup.png)
+
 ## Features
 
 - Ask, Plan, and Build coding modes
 - Streaming Responses API output
+- FIFO follow-up message queue while a response is streaming
 - Switch providers while keeping the conversation transcript, making it possible to plan with one model and execute with another
+- History sent to the provider is windowed to a token budget (larger for cloud providers, smaller for local models) so long threads don't grow the request payload without bound
 - File and directory attachments as inline context, with browser-side parsing and local retrieval for larger document sets
 - OpenAI and xAI provider tools, including web search, Code Interpreter, file search, and remote MCP; xAI also exposes X search
 - Download buttons for provider-generated Code Interpreter files when the response contains usable file metadata
@@ -102,3 +118,7 @@ The container exposes a health check at `/api/health`. Remember that local-provi
 ## Project origin
 
 smoketest grows out of the author's earlier **wordmark** and **darkwords** projects. After **Grok Build** was open-sourced, its codebase was adapted to that existing work to create **brainworm**, and then the next day, smoketest.
+
+## About the deployment URL
+
+Vercel's auto-generated preview/production URLs for this project happen to include "azure." That's Vercel's naming, not a choice made here, and there's no affiliation with Microsoft. Azure's AI platform could be a fine addition as a provider down the line — and if Microsoft's reading this and wants to acquire a cross-provider Responses API workbench, we're open to the conversation.

@@ -16,11 +16,16 @@ export type Attachment = {
   indexedOnly?: boolean;
 };
 
-// A retained previous version of a regenerated assistant reply.
+// A retained previous version of a regenerated assistant reply. Mode and plan
+// state ride along so switching variants restores the reply's own nature —
+// without them a plan proposal viewed next to an ask regeneration could show
+// approve/revise buttons on the wrong variant.
 export type MessageVariant = {
   content: string;
   model?: string;
   provider?: ProviderId;
+  mode?: Mode;
+  planState?: "proposed" | "approved" | "changes_requested";
   toolActivity?: string[];
   generatedFiles?: GeneratedFile[];
 };
@@ -35,6 +40,10 @@ export type Message = {
   mode?: Mode;
   attachments?: Attachment[];
   error?: boolean;
+  // UI status lines (compaction confirmations, toggle feedback). Rendered in
+  // the transcript but never sent to the model and never counted toward the
+  // history budget.
+  notice?: boolean;
   planState?: "proposed" | "approved" | "changes_requested";
   variants?: MessageVariant[];
   variantIndex?: number;
@@ -53,6 +62,11 @@ export type Thread = {
   updatedAt: number;
   messages: Message[];
   roundtableConfig?: RoundtableConfig;
+  // A running summary that replaces older turns in the request history (see
+  // lib/compaction.ts). `compactedThroughId` is the id of the last message
+  // already folded into `compactedSummary`.
+  compactedSummary?: string;
+  compactedThroughId?: string;
 };
 
 export type ProviderConfig = {

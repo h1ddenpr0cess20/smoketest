@@ -393,14 +393,19 @@ select:focus-visible {
   min-width: 0;
   min-height: 100vh;
   display: grid;
+  /* Rows are assigned explicitly below: the planning-style bar (row 2) only
+     exists in plan mode, and auto-placement would shift the conversation and
+     composer up a row without it — putting the composer in the stretchy 1fr
+     row, where it floats above the bottom on short threads. */
   grid-template-rows: 68px auto minmax(0, 1fr) auto;
 }
 .topbar {
+  grid-row: 1;
   position: sticky;
   top: 0;
   z-index: 10;
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) auto auto minmax(170px, 1fr);
+  grid-template-columns: minmax(150px, 1fr) auto minmax(170px, 1fr);
   align-items: center;
   gap: 14px;
   height: 68px;
@@ -559,6 +564,12 @@ select:focus-visible {
 }
 
 .plan-style-bar {
+  grid-row: 2;
+  /* Pinned just under the sticky topbar so the Solo/Roundtable choice stays
+     reachable while scrolling a long plan thread. */
+  position: sticky;
+  top: 68px;
+  z-index: 9;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -603,6 +614,7 @@ select:focus-visible {
    the conversation must never become its own scroll container — an
    overflow/overscroll here swallows wheel events over the chat area. */
 .conversation {
+  grid-row: 3;
   min-height: 0;
 }
 .message-list {
@@ -1451,6 +1463,7 @@ select:focus-visible {
 /* ---------- Composer ---------- */
 
 .composer-zone {
+  grid-row: 4;
   position: sticky;
   bottom: 0;
   width: 100%;
@@ -1547,6 +1560,87 @@ select:focus-visible {
   opacity: 0.4;
   cursor: default;
 }
+.message-queue {
+  width: min(840px, 100%);
+  margin: 0 auto 7px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--raised) 92%, transparent);
+  box-shadow: 0 7px 24px color-mix(in srgb, var(--shadow) 60%, transparent);
+}
+.message-queue header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.message-queue header strong {
+  color: var(--accent);
+  font: 700 9px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.message-queue header span {
+  color: var(--faint);
+  font: 8.5px var(--font-mono);
+}
+.message-queue ol {
+  max-height: 132px;
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.message-queue li {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.queue-mode,
+.queue-files {
+  flex: none;
+  color: var(--faint);
+  font: 8px var(--font-mono);
+  text-transform: uppercase;
+}
+.queue-mode {
+  color: var(--accent);
+}
+.queue-copy {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font: 10px var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.message-queue li button {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--faint);
+  background: transparent;
+  cursor: pointer;
+}
+.message-queue li button:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+}
 .composer {
   position: relative;
   width: min(840px, 100%);
@@ -1630,6 +1724,15 @@ select:focus-visible {
   gap: 4px;
   padding: 4px 8px 8px 16px;
 }
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.composer-send.is-queue {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
 .composer-hint {
   min-width: 0;
   flex: 1;
@@ -1638,6 +1741,37 @@ select:focus-visible {
   font: 9.5px var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.context-meter {
+  width: 40px;
+  height: 5px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--line);
+}
+.context-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--muted);
+  transition: width 200ms ease;
+}
+.context-meter.is-warn span {
+  background: var(--danger);
+}
+.composer-icon.is-compacting {
+  color: var(--accent);
+  animation: compacting-pulse 1.1s ease-in-out infinite;
+}
+@keyframes compacting-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 .composer-icon,
 .composer-send {
@@ -2342,6 +2476,7 @@ select:focus-visible {
     padding: 0 10px 10px;
   }
   .plan-style-bar {
+    top: 60px;
     min-height: 38px;
   }
   .roundtable-setup {

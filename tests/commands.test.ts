@@ -59,6 +59,10 @@ describe("composer commands", () => {
     expect(parseCommand("/mcp")).toEqual({ type: "mcp" });
   });
 
+  it("parses /compact", () => {
+    expect(parseCommand("/compact")).toEqual({ type: "compact" });
+  });
+
   it("parses /search on, off, and bare toggle", () => {
     expect(parseCommand("/search on")).toEqual({
       type: "search",
