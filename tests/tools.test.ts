@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTools } from "../lib/tools";
+import { buildTools, isMcpUrlAllowedForProvider } from "../lib/tools";
 import { toolActivity } from "../lib/stream";
 
 describe("provider tool building", () => {
@@ -9,7 +9,7 @@ describe("provider tool building", () => {
     codeInterpreter: true,
     fileSearch: true,
     vectorStoreIds: ["vs_123"],
-    mcpServers: [{ label: "workspace", url: "http://localhost:9404/mcp" }],
+    mcpServers: [{ label: "workspace", url: "https://mcp.example.com/mcp" }],
   };
 
   it("allows MCP for LM Studio and drops all tools for Ollama", () => {
@@ -17,11 +17,42 @@ describe("provider tool building", () => {
       {
         type: "mcp",
         server_label: "workspace",
-        server_url: "http://localhost:9404/mcp",
+        server_url: "https://mcp.example.com/mcp",
         require_approval: "never",
       },
     ]);
     expect(buildTools("ollama", everything)).toEqual([]);
+  });
+
+  it("allows plain http:// MCP servers for local providers only", () => {
+    const local = {
+      mcpServers: [{ label: "workspace", url: "http://localhost:9404/mcp" }],
+    };
+    expect(buildTools("lmstudio", local)).toEqual([
+      {
+        type: "mcp",
+        server_label: "workspace",
+        server_url: "http://localhost:9404/mcp",
+        require_approval: "never",
+      },
+    ]);
+    // Cloud providers run MCP calls from their own infrastructure and can
+    // never reach a plain http:// (usually localhost/LAN) server.
+    expect(buildTools("openai", local)).toEqual([]);
+    expect(buildTools("xai", local)).toEqual([]);
+  });
+
+  it("exposes the provider gate used to filter the MCP server list", () => {
+    expect(
+      isMcpUrlAllowedForProvider("http://localhost:9404/mcp", "lmstudio"),
+    ).toBe(true);
+    expect(
+      isMcpUrlAllowedForProvider("http://localhost:9404/mcp", "openai"),
+    ).toBe(false);
+    expect(
+      isMcpUrlAllowedForProvider("https://mcp.example.com/mcp", "openai"),
+    ).toBe(true);
+    expect(isMcpUrlAllowedForProvider("not a url", "lmstudio")).toBe(false);
   });
 
   it("builds the OpenAI set (no x_search, file_search needs store ids)", () => {
@@ -61,17 +92,17 @@ describe("provider tool building", () => {
 
   it("emits MCP servers with approval disabled and rejects bad entries", () => {
     const [mcp] = buildTools("openai", {
-      mcpServers: [{ label: "workspace", url: "http://localhost:9404/mcp" }],
+      mcpServers: [{ label: "workspace", url: "https://mcp.example.com/mcp" }],
     });
     expect(mcp).toEqual({
       type: "mcp",
       server_label: "workspace",
-      server_url: "http://localhost:9404/mcp",
+      server_url: "https://mcp.example.com/mcp",
       require_approval: "never",
     });
     expect(
       buildTools("openai", {
-        mcpServers: [{ label: "bad label!", url: "http://x/mcp" }],
+        mcpServers: [{ label: "bad label!", url: "https://x/mcp" }],
       }),
     ).toEqual([]);
     expect(

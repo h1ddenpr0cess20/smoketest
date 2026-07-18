@@ -19,6 +19,7 @@ import remarkGfm from "remark-gfm";
 import {
   eventErrorMessage,
   eventText,
+  eventTextItemId,
   finalResponseText,
   generatedFilesFromEvent,
   generatedFilesFromResponse,
@@ -72,6 +73,7 @@ import {
 import {
   MCP_LABEL_PATTERN,
   TOOL_SUPPORT,
+  isMcpUrlAllowedForProvider,
   isValidMcpUrl,
   type ToolRequest,
 } from "@/lib/tools";
@@ -666,6 +668,10 @@ async function streamAssistant(
 ): Promise<StreamOutcome> {
   let streamed = "";
   let lastFlush = 0;
+  // Tracks which output item the streamed text last belonged to, so a new
+  // part (e.g. a second message, or text resuming after a tool call) gets a
+  // paragraph break instead of running into the previous part.
+  let lastTextItemId = "";
   // Keyed by item id so a tool call's label upgrades in place when the query
   // arrives on output_item.done instead of duplicating the entry.
   const activities = new Map<string, string>();
@@ -751,6 +757,11 @@ async function streamAssistant(
       }
       const delta = eventText(event);
       if (delta) {
+        const itemId = eventTextItemId(event);
+        if (streamed && itemId && lastTextItemId && itemId !== lastTextItemId) {
+          streamed += "\n\n";
+        }
+        if (itemId) lastTextItemId = itemId;
         streamed += delta;
         push();
       }
@@ -4143,8 +4154,12 @@ export default function Home() {
                   <em>optional</em>
                 )}
                 <input
-                  type="password"
+                  className="api-key-input"
+                  type="text"
                   autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
                   value={currentSettings.apiKey}
                   onChange={(event) =>
                     updateProviderSettings({ apiKey: event.target.value })
@@ -4354,40 +4369,58 @@ export default function Home() {
                     )}
                   <div className="mcp-block">
                     <span className="overline">MCP SERVERS</span>
-                    {mcpServers.map((server) => (
-                      <div className="mcp-row" key={server.id}>
-                        <label>
-                          <input
-                            type="checkbox"
-                            checked={server.enabled}
-                            onChange={(event) =>
+                    {mcpServers.map((server) => {
+                      const reachable = isMcpUrlAllowedForProvider(
+                        server.url,
+                        provider,
+                      );
+                      return (
+                        <div
+                          className={`mcp-row${reachable ? "" : " unavailable"}`}
+                          key={server.id}
+                        >
+                          <label
+                            title={
+                              reachable
+                                ? undefined
+                                : `${currentProvider.name} runs MCP calls from the cloud and can't reach a plain http:// server — use an https:// URL.`
+                            }
+                          >
+                            <input
+                              type="checkbox"
+                              checked={server.enabled}
+                              onChange={(event) =>
+                                setMcpServers((current) =>
+                                  current.map((item) =>
+                                    item.id === server.id
+                                      ? {
+                                          ...item,
+                                          enabled: event.target.checked,
+                                        }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            />
+                            <span>
+                              <strong>{server.label}</strong>
+                              <small>{server.url}</small>
+                            </span>
+                          </label>
+                          <button
+                            className="icon-button"
+                            onClick={() =>
                               setMcpServers((current) =>
-                                current.map((item) =>
-                                  item.id === server.id
-                                    ? { ...item, enabled: event.target.checked }
-                                    : item,
-                                ),
+                                current.filter((item) => item.id !== server.id),
                               )
                             }
-                          />
-                          <span>
-                            <strong>{server.label}</strong>
-                            <small>{server.url}</small>
-                          </span>
-                        </label>
-                        <button
-                          className="icon-button"
-                          onClick={() =>
-                            setMcpServers((current) =>
-                              current.filter((item) => item.id !== server.id),
-                            )
-                          }
-                          aria-label={`Remove ${server.label}`}
-                        >
-                          <Icon name="trash" size={13} />
-                        </button>
-                      </div>
-                    ))}
+                            aria-label={`Remove ${server.label}`}
+                          >
+                            <Icon name="trash" size={13} />
+                          </button>
+                        </div>
+                      );
+                    })}
                     <div className="mcp-add">
                       <input
                         value={mcpDraft.label}

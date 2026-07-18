@@ -1,4 +1,4 @@
-import type { ProviderId } from "./providers";
+import { PROVIDERS, type ProviderId } from "./providers";
 
 // Which provider-managed tools each Responses endpoint accepts: web_search,
 // code_interpreter, and file_search (vector stores) on OpenAI and xAI,
@@ -64,6 +64,22 @@ export function isValidMcpUrl(value: string) {
   }
 }
 
+// Cloud providers (OpenAI, xAI) dial the MCP server from their own
+// infrastructure, so a plain http:// URL — almost always localhost or a LAN
+// address meant for a provider running on the same machine — is never
+// reachable from there. Local providers run on the user's machine alongside
+// smoketest, so http:// is fine for them. Gate on scheme rather than on the
+// hostname since providers can't resolve the user's private network either
+// way, and requiring https keeps the request itself encrypted in transit.
+export function isMcpUrlAllowedForProvider(
+  value: string,
+  provider: ProviderId,
+) {
+  if (!isValidMcpUrl(value)) return false;
+  if (PROVIDERS[provider].local) return true;
+  return new URL(value).protocol === "https:";
+}
+
 // Builds the Responses API `tools` array for a provider, silently dropping
 // anything the provider does not support. Tool shapes follow wordmark's
 // staticTools definitions. MCP approval is "never" because smoketest has no
@@ -97,7 +113,10 @@ export function buildTools(
   }
   if (support.mcp) {
     for (const server of request.mcpServers ?? []) {
-      if (!MCP_LABEL_PATTERN.test(server.label) || !isValidMcpUrl(server.url))
+      if (
+        !MCP_LABEL_PATTERN.test(server.label) ||
+        !isMcpUrlAllowedForProvider(server.url, provider)
+      )
         continue;
       tools.push({
         type: "mcp",

@@ -3,6 +3,7 @@ export type ResponseStreamEvent = {
   delta?: unknown;
   text?: string;
   message?: string;
+  item_id?: string;
   response?: {
     output_text?: unknown;
     output?: unknown[];
@@ -54,6 +55,19 @@ export function eventText(event: ResponseStreamEvent): string {
   if (event.type === "response.output_text.delta")
     return deltaText(event.delta);
   if (event.type === "response.refusal.delta") return deltaText(event.delta);
+  return "";
+}
+
+// The id of the output item a text delta belongs to, so callers can tell a
+// new message part started (a response can stream several — e.g. text
+// interleaved with tool calls) and separate it instead of running the two
+// parts' text together.
+export function eventTextItemId(event: ResponseStreamEvent): string {
+  if (
+    event.type === "response.output_text.delta" ||
+    event.type === "response.refusal.delta"
+  )
+    return event.item_id || "";
   return "";
 }
 
@@ -248,8 +262,11 @@ export function outputTextFromJson(value: unknown): string {
   if (Array.isArray(response.output_text)) {
     return response.output_text
       .filter((part): part is string => typeof part === "string")
-      .join("");
+      .join("\n\n");
   }
+  // A response can carry several output items (e.g. text interleaved with
+  // tool calls, or more than one message) — join their text parts with a
+  // paragraph break instead of running them together.
   return (response.output ?? [])
     .flatMap((item) => item?.content ?? [])
     .filter(
@@ -258,5 +275,5 @@ export function outputTextFromJson(value: unknown): string {
         typeof part.text === "string",
     )
     .map((part) => part.text)
-    .join("");
+    .join("\n\n");
 }
