@@ -713,6 +713,7 @@ export default function Home() {
   const fileRef = useRef<HTMLInputElement>(null);
   const dirRef = useRef<HTMLInputElement>(null);
   const attachMenuRef = useRef<HTMLDivElement>(null);
+  const indexingRef = useRef<Promise<unknown> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -947,19 +948,17 @@ export default function Home() {
     const threadId = activeThread.id;
     // Directory trees headed for the RAG index get a wide budget (their text
     // lives in IndexedDB); inline-bound directories stay tight because every
-    // byte lands in the prompt and localStorage.
-    const embeddingModel =
-      currentProvider.local && currentSettings.localRag
-        ? resolveEmbeddingModel(currentSettings.embeddingModel, models)
-        : null;
-    const indexedOnly = fromDirectory && Boolean(embeddingModel);
+    // byte lands in the prompt and localStorage. Eligibility is the provider
+    // setting alone — never the model list having loaded yet.
+    const ragEligible = currentProvider.local && currentSettings.localRag;
+    const embeddingModel = ragEligible ? resolveEmbeddingModel(currentSettings.embeddingModel, models) : null;
     const limit = fromDirectory
-      ? indexedOnly
+      ? ragEligible
         ? MAX_DIRECTORY_FILES_RAG
         : MAX_DIRECTORY_FILES_INLINE
       : MAX_SINGLE_FILES;
     const charBudget = fromDirectory
-      ? indexedOnly
+      ? ragEligible
         ? MAX_DIRECTORY_RAG_CHARS
         : MAX_DIRECTORY_INLINE_CHARS
       : Number.POSITIVE_INFINITY;
@@ -992,13 +991,10 @@ export default function Home() {
         }
         totalChars += text.length;
         docs.push({ name, text });
-        next.push({
-          id: id(),
-          name,
-          size: file.size,
-          content: indexedOnly ? "" : text,
-          indexedOnly: indexedOnly || undefined,
-        });
+        // Content stays on the attachment until indexing has actually
+        // succeeded, so a failed or unavailable index can always fall back to
+        // inline text or index later at send time.
+        next.push({ id: id(), name, size: file.size, content: text });
       } catch {
         skipped++;
       }
@@ -1017,13 +1013,31 @@ export default function Home() {
 
     if (docs.length && embeddingModel) {
       setRagStatus({ threadId, text: `Indexing ${docs.length} file${docs.length === 1 ? "" : "s"}…` });
-      try {
+      // Tracked so a send that races the attach-time indexing waits for it
+      // instead of retrieving from a partial index.
+      const operation = (async () => {
         const result = await indexDocuments(
           threadId,
           docs,
           embeddingModel,
           makeEmbed(provider, currentSettings.apiKey, embeddingModel),
         );
+        // Only now that the chunks are safely in IndexedDB can directory
+        // attachments drop their inline text (keeps localStorage small).
+        if (fromDirectory) {
+          const failed = new Set(result.failed);
+          const indexedNames = new Set(docs.map((doc) => doc.name).filter((name) => !failed.has(name)));
+          setAttachments((current) =>
+            current.map((file) =>
+              indexedNames.has(file.name) && file.content ? { ...file, content: "", indexedOnly: true } : file,
+            ),
+          );
+        }
+        return result;
+      })();
+      indexingRef.current = operation;
+      try {
+        const result = await operation;
         const stats = getLocalDocIndexStats(threadId);
         setRagStatus({
           threadId,
@@ -1036,6 +1050,8 @@ export default function Home() {
           threadId,
           text: error instanceof Error ? `Indexing failed: ${error.message}` : "Indexing failed.",
         });
+      } finally {
+        if (indexingRef.current === operation) indexingRef.current = null;
       }
     }
   }
@@ -1217,6 +1233,9 @@ export default function Home() {
           try {
             const embed = makeEmbed(provider, currentSettings.apiKey, embeddingModel);
             await restoreLocalDocIndex(threadId);
+            // Never retrieve from a half-built index while attach-time
+            // indexing is still running.
+            if (indexingRef.current) await indexingRef.current.catch(() => null);
             // Attachments the index doesn't know yet (attach-time indexing was
             // off or unavailable, a reload on another browser, older threads)
             // are indexed from their stored text before retrieval.
