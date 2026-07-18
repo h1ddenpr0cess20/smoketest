@@ -148,6 +148,10 @@ const ROUNDTABLE_SUGGESTIONS = [
     "Balance user experience, scope, and delivery tradeoffs.",
   ],
   ["Contrarian", "Stress-test consensus and surface overlooked alternatives."],
+  [
+    "Smoketester",
+    "Catch likely bugs, edge cases, regressions, and shaky assumptions before implementation.",
+  ],
 ] as const;
 
 const ROUNDTABLE_TOOL_LABELS: Record<RoundtableToolKey, string> = {
