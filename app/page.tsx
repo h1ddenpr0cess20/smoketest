@@ -736,6 +736,29 @@ function Icon({
   );
 }
 
+function WildfireMark() {
+  return (
+    <svg
+      className="wildfire-mark"
+      viewBox="0 0 64 64"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        className="brand-smoke"
+        d="M39.5 55.5c9.7-.8 16.5-6.2 16.5-14.1 0-5.2-2.8-8.2-6.5-11.2-2.6-2.1-2.6-4.8-.5-7.4 3.2-4 2-9.8-2.8-14.3.5 5.2-1.8 8.4-5.8 10.5-4.8 2.5-6.4 6.4-4.2 10.3 1.5 2.7 4.8 4 5.8 7.1 1.3 4-1.4 7.5-5.2 9.3l2.7 9.8Z"
+      />
+      <path
+        className="brand-tree"
+        fillRule="evenodd"
+        d="m24.2 10-8.3 15h4.6L13 37.2h5.2L9 51.5h12.2V57h6v-5.5h12.2l-9.2-14.3h5.2L28 25h4.5L24.2 10Z"
+        clipRule="evenodd"
+      />
+      <path className="brand-ember" d="M9 51.5h30.4L36.5 56H9v-4.5Z" />
+    </svg>
+  );
+}
+
 // Fenced code blocks get a toolbar with the language label and a copy button,
 // ported from brainworm's CodeBlock.
 function codeLanguage(children: React.ReactNode): string | null {
@@ -2211,19 +2234,7 @@ export default function Home() {
       <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
         <div className="brand-row">
           <div className="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 64 64" focusable="false">
-              <path
-                className="brand-smoke"
-                d="M39.5 55.5c9.7-.8 16.5-6.2 16.5-14.1 0-5.2-2.8-8.2-6.5-11.2-2.6-2.1-2.6-4.8-.5-7.4 3.2-4 2-9.8-2.8-14.3.5 5.2-1.8 8.4-5.8 10.5-4.8 2.5-6.4 6.4-4.2 10.3 1.5 2.7 4.8 4 5.8 7.1 1.3 4-1.4 7.5-5.2 9.3l2.7 9.8Z"
-              />
-              <path
-                className="brand-tree"
-                fillRule="evenodd"
-                d="m24.2 10-8.3 15h4.6L13 37.2h5.2L9 51.5h12.2V57h6v-5.5h12.2l-9.2-14.3h5.2L28 25h4.5L24.2 10Z"
-                clipRule="evenodd"
-              />
-              <path className="brand-ember" d="M9 51.5h30.4L36.5 56H9v-4.5Z" />
-            </svg>
+            <WildfireMark />
           </div>
           <div>
             <strong>smoketest</strong>
@@ -2392,10 +2403,8 @@ export default function Home() {
         <div className="conversation">
           {!activeThread?.messages.length ? (
             <div className="empty-state">
-              <div className="smoke-orbit" aria-hidden="true">
-                <i />
-                <i />
-                <i />
+              <div className="splash-mark" aria-hidden="true">
+                <WildfireMark />
               </div>
               <p className="overline">
                 RESPONSES API · FOUR PROVIDERS · ONE WORKSPACE

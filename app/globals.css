@@ -171,7 +171,7 @@ select:focus-visible {
     background-color 160ms ease,
     border-color 160ms ease;
 }
-.brand-mark svg {
+.wildfire-mark {
   display: block;
   width: 100%;
   height: 100%;
@@ -1106,7 +1106,7 @@ select:focus-visible {
   padding: 48px 0 40px;
   text-align: center;
 }
-.smoke-orbit {
+.splash-mark {
   position: relative;
   width: 92px;
   height: 92px;
@@ -1114,54 +1114,13 @@ select:focus-visible {
   place-items: center;
   margin-bottom: 20px;
   border: 1px solid var(--line);
-  border-radius: 30px 30px 30px 8px;
-  background: var(--raised);
+  padding: 6px;
+  border-radius: 27px;
+  background: var(--brand-bg);
   box-shadow: 0 14px 38px var(--shadow);
-  transform: rotate(-2deg);
-}
-.smoke-orbit::after {
-  content: "";
-  position: absolute;
-  left: 42px;
-  bottom: 24px;
-  width: 9px;
-  height: 9px;
-  background: var(--warm);
-  border-radius: 50%;
-  box-shadow: 0 0 20px color-mix(in srgb, var(--warm) 35%, transparent);
-}
-.smoke-orbit i {
-  position: absolute;
-  width: 45px;
-  height: 18px;
-  border: 1px solid var(--accent);
-  border-color: var(--accent) transparent transparent transparent;
-  border-radius: 50%;
-  transform: rotate(-18deg);
-  opacity: 0.8;
-  animation: breathe 4s ease-in-out infinite;
-}
-.smoke-orbit i:nth-child(1) {
-  top: 24px;
-  left: 26px;
-}
-.smoke-orbit i:nth-child(2) {
-  top: 36px;
-  left: 14px;
-  opacity: 0.45;
-  animation-delay: -0.8s;
-}
-.smoke-orbit i:nth-child(3) {
-  top: 46px;
-  left: 34px;
-  opacity: 0.22;
-  animation-delay: -1.6s;
-}
-@keyframes breathe {
-  50% {
-    transform: translateY(-4px) rotate(-11deg) scaleX(1.06);
-    opacity: 0.45;
-  }
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease;
 }
 .overline {
   margin: 0;
