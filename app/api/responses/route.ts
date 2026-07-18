@@ -5,7 +5,12 @@ import {
   providerEndpoint,
   PROVIDERS,
 } from "@/lib/providers";
-import { buildTools, isValidMcpUrl, MCP_LABEL_PATTERN, type ToolRequest } from "@/lib/tools";
+import {
+  buildTools,
+  isValidMcpUrl,
+  MCP_LABEL_PATTERN,
+  type ToolRequest,
+} from "@/lib/tools";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +22,7 @@ type RequestBody = {
   input?: unknown;
   instructions?: unknown;
   reasoningEffort?: unknown;
+  priorityProcessing?: unknown;
   tools?: unknown;
 };
 
@@ -37,7 +43,9 @@ function sanitizeToolRequest(value: unknown): ToolRequest {
   };
   const vectorStoreIds = Array.isArray(raw.vectorStoreIds)
     ? raw.vectorStoreIds
-        .filter((id): id is string => typeof id === "string" && Boolean(id.trim()))
+        .filter(
+          (id): id is string => typeof id === "string" && Boolean(id.trim()),
+        )
         .slice(0, MAX_VECTOR_STORES)
     : [];
   const mcpServers = Array.isArray(raw.mcpServers)
@@ -75,7 +83,11 @@ function sanitizeInput(value: unknown): string | InputMessage[] | null {
   for (const item of value) {
     if (!item || typeof item !== "object") return null;
     const { role, content } = item as { role?: unknown; content?: unknown };
-    if ((role !== "user" && role !== "assistant") || typeof content !== "string") return null;
+    if (
+      (role !== "user" && role !== "assistant") ||
+      typeof content !== "string"
+    )
+      return null;
     messages.push({ role, content });
   }
   return messages;
@@ -97,13 +109,22 @@ export async function POST(request: NextRequest) {
   const apiKey = typeof body.apiKey === "string" ? body.apiKey : "";
   const model = typeof body.model === "string" ? body.model.trim() : "";
   const input = sanitizeInput(body.input);
-  const instructions = typeof body.instructions === "string" ? body.instructions.trim() : "";
+  const instructions =
+    typeof body.instructions === "string" ? body.instructions.trim() : "";
 
   if (PROVIDERS[provider].apiKeyRequired && !apiKey.trim()) {
-    return Response.json({ error: `${PROVIDERS[provider].name} requires an API key.` }, { status: 400 });
+    return Response.json(
+      { error: `${PROVIDERS[provider].name} requires an API key.` },
+      { status: 400 },
+    );
   }
-  if (!model) return Response.json({ error: "Choose a model first." }, { status: 400 });
-  if (!input) return Response.json({ error: "Input is empty or malformed." }, { status: 400 });
+  if (!model)
+    return Response.json({ error: "Choose a model first." }, { status: 400 });
+  if (!input)
+    return Response.json(
+      { error: "Input is empty or malformed." },
+      { status: 400 },
+    );
 
   const upstreamBody: Record<string, unknown> = {
     model,
@@ -111,12 +132,27 @@ export async function POST(request: NextRequest) {
     stream: true,
   };
   if (instructions) upstreamBody.instructions = instructions;
+  // Priority processing is an OpenAI-only, per-request service tier. Ignore
+  // spoofed values for every compatible provider rather than forwarding an
+  // option they may reject or interpret differently.
+  if (provider === "openai" && body.priorityProcessing === true) {
+    upstreamBody.service_tier = "priority";
+  }
   const effort = String(body.reasoningEffort);
   if (["low", "medium", "high"].includes(effort)) {
     upstreamBody.reasoning = { effort };
   }
   const tools = buildTools(provider, sanitizeToolRequest(body.tools));
   if (tools.length) upstreamBody.tools = tools;
+  // OpenAI omits Code Interpreter outputs unless they are explicitly
+  // requested. They carry the generated file/container ids used by the
+  // download UI. xAI rejects this OpenAI-only include field.
+  if (
+    provider === "openai" &&
+    tools.some((tool) => tool.type === "code_interpreter")
+  ) {
+    upstreamBody.include = ["code_interpreter_call.outputs"];
+  }
   // The transcript is re-sent in full every turn, so server-side response
   // storage is never used. Only OpenAI documents `store`; leave others alone.
   if (provider === "openai") upstreamBody.store = false;
@@ -125,7 +161,10 @@ export async function POST(request: NextRequest) {
   try {
     upstream = await fetch(providerEndpoint(provider, "responses"), {
       method: "POST",
-      headers: { ...authorizationHeaders(provider, apiKey), Accept: "text/event-stream" },
+      headers: {
+        ...authorizationHeaders(provider, apiKey),
+        Accept: "text/event-stream",
+      },
       body: JSON.stringify(upstreamBody),
       signal: request.signal,
       cache: "no-store",
@@ -146,7 +185,10 @@ export async function POST(request: NextRequest) {
     const raw = await upstream.text();
     let message = raw;
     try {
-      const parsed = JSON.parse(raw) as { error?: { message?: string } | string; message?: string };
+      const parsed = JSON.parse(raw) as {
+        error?: { message?: string } | string;
+        message?: string;
+      };
       message =
         typeof parsed.error === "string"
           ? parsed.error
@@ -155,19 +197,27 @@ export async function POST(request: NextRequest) {
       // Keep the provider's plain-text response.
     }
     return Response.json(
-      { error: message || `${PROVIDERS[provider].name} returned ${upstream.status}.` },
+      {
+        error:
+          message || `${PROVIDERS[provider].name} returned ${upstream.status}.`,
+      },
       { status: upstream.status },
     );
   }
 
   if (!upstream.body) {
-    return Response.json({ error: "Provider returned an empty response." }, { status: 502 });
+    return Response.json(
+      { error: "Provider returned an empty response." },
+      { status: 502 },
+    );
   }
 
   return new Response(upstream.body, {
     status: 200,
     headers: {
-      "Content-Type": upstream.headers.get("content-type") || "text/event-stream; charset=utf-8",
+      "Content-Type":
+        upstream.headers.get("content-type") ||
+        "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       "X-Accel-Buffering": "no",
     },

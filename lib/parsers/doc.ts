@@ -57,6 +57,7 @@ export function extractLegacyOfficeText(arrayBuffer: ArrayBuffer): string {
   if (asciiRun.length >= 40) ascii += asciiRun;
 
   const asciiText = ascii.replace(/\n{3,}/g, "\n\n").trim();
-  if (!asciiText) throw new Error("No readable text extracted from legacy Office file");
+  if (!asciiText)
+    throw new Error("No readable text extracted from legacy Office file");
   return asciiText;
 }

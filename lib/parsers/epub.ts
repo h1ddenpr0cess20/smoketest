@@ -32,7 +32,9 @@ export async function extractEpubText(
         : "";
 
       const opf = new DOMParser().parseFromString(opfText, "application/xml");
-      const idrefs = [...opf.querySelectorAll("spine itemref")].map((el) => el.getAttribute("idref"));
+      const idrefs = [...opf.querySelectorAll("spine itemref")].map((el) =>
+        el.getAttribute("idref"),
+      );
       const manifest: Record<string, string | null> = {};
       opf.querySelectorAll("manifest item").forEach((el) => {
         const id = el.getAttribute("id");
@@ -58,7 +60,8 @@ export async function extractEpubText(
     const html = await zf.async("string");
     const dom = new DOMParser().parseFromString(html, "text/html");
     dom.querySelectorAll("script,style").forEach((el) => el.remove());
-    text += (dom.body?.textContent || "").replace(/\n{3,}/g, "\n\n").trim() + "\n\n";
+    text +=
+      (dom.body?.textContent || "").replace(/\n{3,}/g, "\n\n").trim() + "\n\n";
   }
 
   text = text.trim();

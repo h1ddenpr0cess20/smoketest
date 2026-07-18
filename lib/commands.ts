@@ -18,7 +18,10 @@ const MODE_COMMANDS: Record<string, Mode> = {
 export const COMMANDS: { command: string; hint: string }[] = [
   { command: "/ask", hint: "Switch to Ask mode (optionally with a prompt)" },
   { command: "/plan", hint: "Switch to Plan mode (optionally with a prompt)" },
-  { command: "/build", hint: "Switch to Build mode (optionally with a prompt)" },
+  {
+    command: "/build",
+    hint: "Switch to Build mode (optionally with a prompt)",
+  },
   { command: "/new", hint: "Start a new session" },
   { command: "/effort", hint: "Set reasoning effort: low, medium, or high" },
   { command: "/search", hint: "Toggle web search: on, off, or blank to flip" },
@@ -47,7 +50,9 @@ export function parseCommand(input: string): CommandAction | null {
     return {
       type: "effort",
       effort:
-        remainder === "low" || remainder === "medium" || remainder === "high" ? remainder : null,
+        remainder === "low" || remainder === "medium" || remainder === "high"
+          ? remainder
+          : null,
     };
   }
   const mode = MODE_COMMANDS[command];

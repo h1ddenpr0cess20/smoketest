@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { normalizeDocumentPath, shouldIgnoreDirectoryPath } from "../lib/docPaths";
-import { buildDocChunkRecord, type StoredDocChunk } from "../lib/docChunkStorage";
+import {
+  normalizeDocumentPath,
+  shouldIgnoreDirectoryPath,
+} from "../lib/docPaths";
+import {
+  buildDocChunkRecord,
+  type StoredDocChunk,
+} from "../lib/docChunkStorage";
 
 describe("document paths", () => {
   it("normalizes separators and strips traversal segments", () => {
@@ -11,7 +17,9 @@ describe("document paths", () => {
   });
 
   it("ignores dependency, VCS, and generated noise in directory uploads", () => {
-    expect(shouldIgnoreDirectoryPath("repo/node_modules/react/index.js")).toBe(true);
+    expect(shouldIgnoreDirectoryPath("repo/node_modules/react/index.js")).toBe(
+      true,
+    );
     expect(shouldIgnoreDirectoryPath("repo/.git/HEAD")).toBe(true);
     expect(shouldIgnoreDirectoryPath("repo/.next/server/x.js")).toBe(true);
     expect(shouldIgnoreDirectoryPath("repo/dist/bundle.min.js")).toBe(true);
@@ -23,7 +31,11 @@ describe("document paths", () => {
 });
 
 describe("doc chunk records", () => {
-  const chunk = (name: string, text: string, cacheKey: string | null): StoredDocChunk => ({
+  const chunk = (
+    name: string,
+    text: string,
+    cacheKey: string | null,
+  ): StoredDocChunk => ({
     name,
     text,
     vector: [1, 0],
@@ -49,11 +61,17 @@ describe("doc chunk records", () => {
       chunk("a.ts", "one", "h1:nomic"),
       chunk("copy/a.ts", "one", "h1:nomic"),
     ]);
-    expect(record.files.map((file) => file.name)).toEqual(["a.ts", "copy/a.ts"]);
+    expect(record.files.map((file) => file.name)).toEqual([
+      "a.ts",
+      "copy/a.ts",
+    ]);
   });
 
   it("inlines chunks that could not be hashed", () => {
-    const record = buildDocChunkRecord("t1", [chunk("a.ts", "one", null), chunk("a.ts", "two", null)]);
+    const record = buildDocChunkRecord("t1", [
+      chunk("a.ts", "one", null),
+      chunk("a.ts", "two", null),
+    ]);
     expect(record.files).toHaveLength(1);
     expect(record.files[0].cacheKey).toBeNull();
     expect(record.files[0].chunks).toHaveLength(2);

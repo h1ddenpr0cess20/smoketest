@@ -68,7 +68,14 @@ export function readZip(arrayBuffer: ArrayBuffer): ZipArchive {
 
     if (name.endsWith("/")) continue;
 
-    files[name] = { name, method, compSize, uncompSize, localHeaderOffset, buffer: arrayBuffer };
+    files[name] = {
+      name,
+      method,
+      compSize,
+      uncompSize,
+      localHeaderOffset,
+      buffer: arrayBuffer,
+    };
   }
 
   return {
@@ -77,11 +84,16 @@ export function readZip(arrayBuffer: ArrayBuffer): ZipArchive {
       const entry = files[name];
       if (!entry) return null;
       return {
-        async async(type: "string" | "arraybuffer" | "uint8array"): Promise<never> {
+        async async(
+          type: "string" | "arraybuffer" | "uint8array",
+        ): Promise<never> {
           const data = await extractEntry(entry);
           if (type === "string") return new TextDecoder().decode(data) as never;
           if (type === "arraybuffer") {
-            return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as never;
+            return data.buffer.slice(
+              data.byteOffset,
+              data.byteOffset + data.byteLength,
+            ) as never;
           }
           return data as never;
         },
@@ -116,15 +128,22 @@ async function extractEntry(entry: ZipEntry): Promise<Uint8Array> {
   if (entry.method === 0) return compData;
   if (entry.method === 8) return inflateRaw(compData);
 
-  throw new Error(`Unsupported compression method ${entry.method} for ${entry.name}`);
+  throw new Error(
+    `Unsupported compression method ${entry.method} for ${entry.name}`,
+  );
 }
 
-async function inflateRaw(compData: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
+async function inflateRaw(
+  compData: Uint8Array<ArrayBuffer>,
+): Promise<Uint8Array> {
   const ds = new DecompressionStream("deflate-raw");
   const writer = ds.writable.getWriter();
   const reader = ds.readable.getReader();
 
-  const writeDone = writer.write(compData).then(() => writer.close()).catch(() => {});
+  const writeDone = writer
+    .write(compData)
+    .then(() => writer.close())
+    .catch(() => {});
 
   const chunks: Uint8Array[] = [];
   let totalLen = 0;

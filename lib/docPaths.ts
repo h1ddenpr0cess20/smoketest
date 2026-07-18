@@ -47,7 +47,11 @@ export function normalizeDocumentPath(path: string): string {
 /** Returns the most specific source path available for a file. */
 export function getDocumentSourceName(file: File): string {
   const tagged = file as FileWithRelativePath;
-  return normalizeDocumentPath(file.webkitRelativePath || tagged._relativePath || file.name) || file.name;
+  return (
+    normalizeDocumentPath(
+      file.webkitRelativePath || tagged._relativePath || file.name,
+    ) || file.name
+  );
 }
 
 /**
@@ -57,7 +61,11 @@ export function getDocumentSourceName(file: File): string {
 export function shouldIgnoreDirectoryPath(path: string): boolean {
   const normalized = normalizeDocumentPath(path);
   const segments = normalized.split("/");
-  if (segments.some((segment) => IGNORED_DIRECTORY_SEGMENTS.has(segment.toLowerCase()))) {
+  if (
+    segments.some((segment) =>
+      IGNORED_DIRECTORY_SEGMENTS.has(segment.toLowerCase()),
+    )
+  ) {
     return true;
   }
   return IGNORED_FILE_PATTERNS.some((pattern) => pattern.test(normalized));

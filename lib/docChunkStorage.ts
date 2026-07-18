@@ -80,7 +80,10 @@ function withChunkDb<T>(run: (db: IDBDatabase) => Promise<T>): Promise<T> {
  * Groups flat chunks into a thread record. Chunks whose file content was
  * hashed become cache references; the rest are inlined.
  */
-export function buildDocChunkRecord(threadId: string, chunks: StoredDocChunk[]): DocChunkRecord {
+export function buildDocChunkRecord(
+  threadId: string,
+  chunks: StoredDocChunk[],
+): DocChunkRecord {
   const files: StoredFileRef[] = [];
   const refByKeyAndSource = new Map<string, StoredFileRef>();
 
@@ -90,7 +93,11 @@ export function buildDocChunkRecord(threadId: string, chunks: StoredDocChunk[]):
       // needs its own reference even though both resolve the same cached chunks.
       const refKey = `${chunk.cacheKey}\u0000${chunk.name}`;
       if (!refByKeyAndSource.has(refKey)) {
-        const ref: StoredFileRef = { cacheKey: chunk.cacheKey, name: chunk.name, chunks: null };
+        const ref: StoredFileRef = {
+          cacheKey: chunk.cacheKey,
+          name: chunk.name,
+          chunks: null,
+        };
         refByKeyAndSource.set(refKey, ref);
         files.push(ref);
       }
@@ -111,7 +118,10 @@ export function buildDocChunkRecord(threadId: string, chunks: StoredDocChunk[]):
  * Persists the chunks for a thread, replacing any existing record.
  * An empty chunk list deletes the record instead.
  */
-export function saveDocChunks(threadId: string, chunks: StoredDocChunk[]): Promise<void> {
+export function saveDocChunks(
+  threadId: string,
+  chunks: StoredDocChunk[],
+): Promise<void> {
   if (chunks.length === 0) return deleteDocChunks(threadId);
   const record = buildDocChunkRecord(threadId, chunks);
   return withChunkDb(
@@ -119,19 +129,26 @@ export function saveDocChunks(threadId: string, chunks: StoredDocChunk[]): Promi
       new Promise<void>((resolve, reject) => {
         const transaction = db.transaction([CHUNK_STORE_NAME], "readwrite");
         transaction.objectStore(CHUNK_STORE_NAME).put(record);
-        transaction.onabort = () => reject(transaction.error || new Error("Doc chunk save aborted"));
+        transaction.onabort = () =>
+          reject(transaction.error || new Error("Doc chunk save aborted"));
         transaction.oncomplete = () => resolve();
       }),
   );
 }
 
-function getDocChunkRecord(threadId: string): Promise<DocChunkRecord | undefined> {
+function getDocChunkRecord(
+  threadId: string,
+): Promise<DocChunkRecord | undefined> {
   return withChunkDb(
     (db) =>
       new Promise<DocChunkRecord | undefined>((resolve, reject) => {
-        const request = db.transaction([CHUNK_STORE_NAME], "readonly").objectStore(CHUNK_STORE_NAME).get(threadId);
+        const request = db
+          .transaction([CHUNK_STORE_NAME], "readonly")
+          .objectStore(CHUNK_STORE_NAME)
+          .get(threadId);
         request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result as DocChunkRecord | undefined);
+        request.onsuccess = () =>
+          resolve(request.result as DocChunkRecord | undefined);
       }),
   );
 }
@@ -140,7 +157,9 @@ function getDocChunkRecord(threadId: string): Promise<DocChunkRecord | undefined
  * Loads the stored chunks for a thread, resolving cache references back into
  * chunks. Referenced files evicted from the cache are dropped.
  */
-export async function loadDocChunks(threadId: string): Promise<StoredDocChunk[]> {
+export async function loadDocChunks(
+  threadId: string,
+): Promise<StoredDocChunk[]> {
   const record = await getDocChunkRecord(threadId);
   if (!record || !Array.isArray(record.files)) return [];
 
@@ -152,9 +171,17 @@ export async function loadDocChunks(threadId: string): Promise<StoredDocChunk[]>
     }
     const cached = await getCachedFileChunks(file.cacheKey).catch(() => null);
     if (cached) {
-      chunks.push(...cached.map((chunk) => ({ ...chunk, name: file.name, cacheKey: file.cacheKey })));
+      chunks.push(
+        ...cached.map((chunk) => ({
+          ...chunk,
+          name: file.name,
+          cacheKey: file.cacheKey,
+        })),
+      );
     } else {
-      console.warn(`Document cache entry is missing for stored source: ${file.name}`);
+      console.warn(
+        `Document cache entry is missing for stored source: ${file.name}`,
+      );
     }
   }
   return chunks;
@@ -167,7 +194,8 @@ export function deleteDocChunks(threadId: string): Promise<void> {
       new Promise<void>((resolve, reject) => {
         const transaction = db.transaction([CHUNK_STORE_NAME], "readwrite");
         transaction.objectStore(CHUNK_STORE_NAME).delete(threadId);
-        transaction.onabort = () => reject(transaction.error || new Error("Doc chunk delete aborted"));
+        transaction.onabort = () =>
+          reject(transaction.error || new Error("Doc chunk delete aborted"));
         transaction.oncomplete = () => resolve();
       }),
   );
@@ -179,15 +207,24 @@ export function deleteDocChunks(threadId: string): Promise<void> {
  * @param key - `<content-hash>:<embedding-model>` cache key.
  * @returns The cached chunks, or `null` on a cache miss.
  */
-export function getCachedFileChunks(key: string): Promise<StoredDocChunk[] | null> {
+export function getCachedFileChunks(
+  key: string,
+): Promise<StoredDocChunk[] | null> {
   return withChunkDb(
     (db) =>
       new Promise<StoredDocChunk[] | null>((resolve, reject) => {
-        const request = db.transaction([FILE_CACHE_STORE_NAME], "readonly").objectStore(FILE_CACHE_STORE_NAME).get(key);
+        const request = db
+          .transaction([FILE_CACHE_STORE_NAME], "readonly")
+          .objectStore(FILE_CACHE_STORE_NAME)
+          .get(key);
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
           const record = request.result as CachedFileRecord | undefined;
-          resolve(Array.isArray(record?.chunks) && record.chunks.length > 0 ? record.chunks : null);
+          resolve(
+            Array.isArray(record?.chunks) && record.chunks.length > 0
+              ? record.chunks
+              : null,
+          );
         };
       }),
   );
@@ -198,13 +235,25 @@ export function getCachedFileChunks(key: string): Promise<StoredDocChunk[] | nul
  * the cache exceeds {@link FILE_CACHE_LIMIT} files. Entries still referenced by
  * a thread record are never evicted.
  */
-export function saveCachedFileChunks(key: string, name: string, chunks: StoredDocChunk[]): Promise<void> {
+export function saveCachedFileChunks(
+  key: string,
+  name: string,
+  chunks: StoredDocChunk[],
+): Promise<void> {
   return withChunkDb(
     (db) =>
       new Promise<void>((resolve, reject) => {
-        const transaction = db.transaction([CHUNK_STORE_NAME, FILE_CACHE_STORE_NAME], "readwrite");
+        const transaction = db.transaction(
+          [CHUNK_STORE_NAME, FILE_CACHE_STORE_NAME],
+          "readwrite",
+        );
         const store = transaction.objectStore(FILE_CACHE_STORE_NAME);
-        const record: CachedFileRecord = { key, name, updated: new Date().toISOString(), chunks };
+        const record: CachedFileRecord = {
+          key,
+          name,
+          updated: new Date().toISOString(),
+          chunks,
+        };
         store.put(record);
 
         const refsRequest = transaction.objectStore(CHUNK_STORE_NAME).getAll();
@@ -228,7 +277,8 @@ export function saveCachedFileChunks(key: string, name: string, chunks: StoredDo
           };
         };
 
-        transaction.onabort = () => reject(transaction.error || new Error("File cache save aborted"));
+        transaction.onabort = () =>
+          reject(transaction.error || new Error("File cache save aborted"));
         transaction.oncomplete = () => resolve();
       }),
   );

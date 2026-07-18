@@ -22,7 +22,9 @@ function slideNumber(name: string): number {
  * @param arrayBuffer - The raw PPTX bytes.
  * @throws If no readable text is found.
  */
-export async function extractPptxText(arrayBuffer: ArrayBuffer): Promise<string> {
+export async function extractPptxText(
+  arrayBuffer: ArrayBuffer,
+): Promise<string> {
   const zip = readZip(arrayBuffer);
 
   const slideNames = Object.keys(zip.files)
@@ -48,7 +50,10 @@ export async function extractPptxText(arrayBuffer: ArrayBuffer): Promise<string>
     if (lines.length) slides.push(lines.join("\n"));
   }
 
-  const text = slides.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
+  const text = slides
+    .join("\n\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   if (!text) throw new Error("No readable text found in PPTX");
   return text;
 }

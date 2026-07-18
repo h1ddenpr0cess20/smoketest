@@ -10,9 +10,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const body = (await request.json().catch(() => null)) as
-    | { provider?: unknown; apiKey?: unknown }
-    | null;
+  const body = (await request.json().catch(() => null)) as {
+    provider?: unknown;
+    apiKey?: unknown;
+  } | null;
   if (!body || !isProviderId(body.provider)) {
     return Response.json({ error: "Unsupported provider." }, { status: 400 });
   }
@@ -20,7 +21,10 @@ export async function POST(request: NextRequest) {
   const provider = body.provider;
   const apiKey = typeof body.apiKey === "string" ? body.apiKey : "";
   if (PROVIDERS[provider].apiKeyRequired && !apiKey.trim()) {
-    return Response.json({ error: `${PROVIDERS[provider].name} requires an API key.` }, { status: 400 });
+    return Response.json(
+      { error: `${PROVIDERS[provider].name} requires an API key.` },
+      { status: 400 },
+    );
   }
 
   try {
@@ -33,12 +37,18 @@ export async function POST(request: NextRequest) {
     if (!response.ok) {
       let message = raw;
       try {
-        const parsed = JSON.parse(raw) as { error?: { message?: string }; message?: string };
+        const parsed = JSON.parse(raw) as {
+          error?: { message?: string };
+          message?: string;
+        };
         message = parsed.error?.message || parsed.message || raw;
       } catch {
         // Keep plain text.
       }
-      return Response.json({ error: message || `Model discovery failed (${response.status}).` }, { status: response.status });
+      return Response.json(
+        { error: message || `Model discovery failed (${response.status}).` },
+        { status: response.status },
+      );
     }
 
     const parsed = JSON.parse(raw) as { data?: Array<{ id?: unknown }> };

@@ -68,7 +68,9 @@ function cellText(cell: Element, shared: string[]): string {
  * @param arrayBuffer - The raw XLSX bytes.
  * @throws If no readable text is found.
  */
-export async function extractXlsxText(arrayBuffer: ArrayBuffer): Promise<string> {
+export async function extractXlsxText(
+  arrayBuffer: ArrayBuffer,
+): Promise<string> {
   const zip = readZip(arrayBuffer);
   const shared = await readSharedStrings(zip);
 

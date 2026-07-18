@@ -4,7 +4,9 @@
    never hardcode a theme color. */
 
 :root {
-  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
   --font-serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -106,7 +108,11 @@ select:focus-visible {
   grid-template-columns: 272px minmax(0, 1fr);
   color: var(--ink);
   background:
-    radial-gradient(circle at 72% 16%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 30%),
+    radial-gradient(
+      circle at 72% 16%,
+      color-mix(in srgb, var(--accent) 6%, transparent),
+      transparent 30%
+    ),
     var(--bg);
 }
 
@@ -163,9 +169,20 @@ select:focus-visible {
   border-radius: 50%;
   transform: rotate(-18deg);
 }
-.brand-mark span:nth-child(1) { left: 6px; top: 9px; }
-.brand-mark span:nth-child(2) { left: 9px; top: 14px; opacity: 0.7; }
-.brand-mark span:nth-child(3) { left: 4px; top: 19px; opacity: 0.38; }
+.brand-mark span:nth-child(1) {
+  left: 6px;
+  top: 9px;
+}
+.brand-mark span:nth-child(2) {
+  left: 9px;
+  top: 14px;
+  opacity: 0.7;
+}
+.brand-mark span:nth-child(3) {
+  left: 4px;
+  top: 19px;
+  opacity: 0.38;
+}
 
 .new-thread {
   display: flex;
@@ -179,7 +196,10 @@ select:focus-visible {
   font-size: 12.5px;
   font-weight: 650;
   cursor: pointer;
-  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    transform 120ms ease;
 }
 .new-thread:hover {
   border-color: var(--accent);
@@ -305,7 +325,9 @@ select:focus-visible {
   border-radius: 10px;
   padding: 9px 2px 7px;
   cursor: pointer;
-  transition: border-color 120ms ease, transform 120ms ease;
+  transition:
+    border-color 120ms ease,
+    transform 120ms ease;
 }
 .provider-grid button:hover {
   border-color: var(--line-strong);
@@ -480,7 +502,9 @@ select:focus-visible {
   padding: 7px 10px;
   cursor: pointer;
   text-align: left;
-  transition: border-color 120ms ease, transform 120ms ease;
+  transition:
+    border-color 120ms ease,
+    transform 120ms ease;
 }
 .model-pill:hover {
   border-color: var(--line-strong);
@@ -647,10 +671,18 @@ select:focus-visible {
   line-height: 1.25;
   margin: 1.5em 0 0.55em;
 }
-.markdown h1 { font-size: 24px; }
-.markdown h2 { font-size: 20px; }
-.markdown h3 { font-size: 17px; }
-.markdown p { margin: 0.65em 0; }
+.markdown h1 {
+  font-size: 24px;
+}
+.markdown h2 {
+  font-size: 20px;
+}
+.markdown h3 {
+  font-size: 17px;
+}
+.markdown p {
+  margin: 0.65em 0;
+}
 .markdown a {
   color: var(--accent);
   text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
@@ -660,7 +692,9 @@ select:focus-visible {
 .markdown ol {
   padding-left: 1.4em;
 }
-.markdown li { margin: 0.25em 0; }
+.markdown li {
+  margin: 0.25em 0;
+}
 .markdown blockquote {
   margin: 1em 0;
   padding: 0.1em 1em;
@@ -718,33 +752,54 @@ select:focus-visible {
 
 /* Brainworm's code-block syntax palette (dark surface in both themes). */
 .markdown .hljs-comment,
-.markdown .hljs-quote { color: #8f9487; font-style: italic; }
+.markdown .hljs-quote {
+  color: #8f9487;
+  font-style: italic;
+}
 .markdown .hljs-keyword,
 .markdown .hljs-selector-tag,
 .markdown .hljs-literal,
-.markdown .hljs-type { color: #d99776; }
+.markdown .hljs-type {
+  color: #d99776;
+}
 .markdown .hljs-title,
 .markdown .hljs-title.function_,
-.markdown .hljs-section { color: #d8c47c; }
+.markdown .hljs-section {
+  color: #d8c47c;
+}
 .markdown .hljs-string,
 .markdown .hljs-attr,
 .markdown .hljs-template-tag,
-.markdown .hljs-template-variable { color: #a9c27f; }
+.markdown .hljs-template-variable {
+  color: #a9c27f;
+}
 .markdown .hljs-number,
 .markdown .hljs-symbol,
 .markdown .hljs-bullet,
 .markdown .hljs-variable,
-.markdown .hljs-variable.constant_ { color: #d9a960; }
+.markdown .hljs-variable.constant_ {
+  color: #d9a960;
+}
 .markdown .hljs-built_in,
 .markdown .hljs-name,
 .markdown .hljs-selector-class,
-.markdown .hljs-selector-id { color: #83b7ae; }
+.markdown .hljs-selector-id {
+  color: #83b7ae;
+}
 .markdown .hljs-meta,
 .markdown .hljs-doctag,
 .markdown .hljs-regexp,
-.markdown .hljs-link { color: #b6a2cf; }
-.markdown .hljs-addition { color: #b8cf92; background: rgba(116, 150, 80, 0.14); }
-.markdown .hljs-deletion { color: #e29a82; background: rgba(169, 88, 59, 0.16); }
+.markdown .hljs-link {
+  color: #b6a2cf;
+}
+.markdown .hljs-addition {
+  color: #b8cf92;
+  background: rgba(116, 150, 80, 0.14);
+}
+.markdown .hljs-deletion {
+  color: #e29a82;
+  background: rgba(169, 88, 59, 0.16);
+}
 
 .stream-cursor {
   display: inline-block;
@@ -757,7 +812,9 @@ select:focus-visible {
   animation: blink 850ms steps(2, jump-none) infinite;
 }
 @keyframes blink {
-  50% { opacity: 0.18; }
+  50% {
+    opacity: 0.18;
+  }
 }
 
 .code-block {
@@ -823,6 +880,60 @@ select:focus-visible {
   font: 9.5px var(--font-mono);
 }
 
+.generated-files {
+  margin-top: 14px;
+  padding: 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-soft) 35%, var(--panel));
+}
+.generated-files-title {
+  display: block;
+  margin: 0 0 8px;
+  color: var(--muted);
+  font: 700 9px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.generated-files-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.generated-files-list button {
+  min-width: 0;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+  color: var(--ink-soft);
+  background: var(--raised);
+  font: 10px var(--font-mono);
+  cursor: pointer;
+}
+.generated-files-list button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.generated-files-list button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  color: var(--accent);
+}
+.generated-files-list button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.generated-files > small {
+  display: block;
+  margin-top: 8px;
+  color: var(--danger);
+  font-size: 10px;
+}
+
 .message-actions {
   min-height: 28px;
   display: flex;
@@ -850,7 +961,10 @@ select:focus-visible {
   font-size: 10.5px;
   font-weight: 650;
   cursor: pointer;
-  transition: color 120ms ease, background 120ms ease, transform 120ms ease;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    transform 120ms ease;
 }
 .message-actions button:hover:not(:disabled) {
   color: var(--accent);
@@ -902,7 +1016,9 @@ select:focus-visible {
   text-align: center;
 }
 @media (hover: none) {
-  .message-actions { opacity: 1; }
+  .message-actions {
+    opacity: 1;
+  }
 }
 
 .plan-actions {
@@ -953,15 +1069,26 @@ select:focus-visible {
   background: var(--accent);
   animation: pulse 1.2s ease-in-out infinite;
 }
-.thinking span:nth-child(2) { animation-delay: 0.14s; }
-.thinking span:nth-child(3) { animation-delay: 0.28s; }
+.thinking span:nth-child(2) {
+  animation-delay: 0.14s;
+}
+.thinking span:nth-child(3) {
+  animation-delay: 0.28s;
+}
 .thinking small {
   margin-left: 6px;
   font: 10px var(--font-mono);
 }
 @keyframes pulse {
-  0%, 100% { opacity: 0.2; transform: translateY(0); }
-  50% { opacity: 1; transform: translateY(-2px); }
+  0%,
+  100% {
+    opacity: 0.2;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
 }
 
 /* ---------- Empty state ---------- */
@@ -1012,11 +1139,27 @@ select:focus-visible {
   opacity: 0.8;
   animation: breathe 4s ease-in-out infinite;
 }
-.smoke-orbit i:nth-child(1) { top: 24px; left: 26px; }
-.smoke-orbit i:nth-child(2) { top: 36px; left: 14px; opacity: 0.45; animation-delay: -0.8s; }
-.smoke-orbit i:nth-child(3) { top: 46px; left: 34px; opacity: 0.22; animation-delay: -1.6s; }
+.smoke-orbit i:nth-child(1) {
+  top: 24px;
+  left: 26px;
+}
+.smoke-orbit i:nth-child(2) {
+  top: 36px;
+  left: 14px;
+  opacity: 0.45;
+  animation-delay: -0.8s;
+}
+.smoke-orbit i:nth-child(3) {
+  top: 46px;
+  left: 34px;
+  opacity: 0.22;
+  animation-delay: -1.6s;
+}
 @keyframes breathe {
-  50% { transform: translateY(-4px) rotate(-11deg) scaleX(1.06); opacity: 0.45; }
+  50% {
+    transform: translateY(-4px) rotate(-11deg) scaleX(1.06);
+    opacity: 0.45;
+  }
 }
 .overline {
   margin: 0;
@@ -1062,7 +1205,10 @@ select:focus-visible {
   padding: 14px 15px;
   text-align: left;
   cursor: pointer;
-  transition: border-color 120ms ease, color 120ms ease, transform 120ms ease;
+  transition:
+    border-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
 }
 .starter-grid button:hover {
   border-color: var(--accent);
@@ -1127,8 +1273,12 @@ select:focus-visible {
   border: 1px solid var(--line-strong);
   border-radius: 16px;
   background: var(--panel);
-  box-shadow: 0 12px 40px var(--shadow), 0 2px 7px var(--shadow);
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  box-shadow:
+    0 12px 40px var(--shadow),
+    0 2px 7px var(--shadow);
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
 }
 .composer:focus-within {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
@@ -1218,7 +1368,10 @@ select:focus-visible {
   border: 0;
   border-radius: 11px;
   cursor: pointer;
-  transition: color 120ms ease, background 120ms ease, transform 120ms ease;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    transform 120ms ease;
 }
 .composer-icon {
   color: var(--muted);
@@ -1343,7 +1496,9 @@ select:focus-visible {
   color: var(--muted);
   padding: 8px;
   cursor: pointer;
-  transition: color 120ms ease, background 120ms ease;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
 }
 .icon-button:hover:not(:disabled) {
   color: var(--accent);
@@ -1568,6 +1723,9 @@ select:focus-visible {
   background: var(--panel);
   padding: 10px 11px;
   cursor: pointer;
+}
+.priority-toggle {
+  grid-column: 1 / -1;
 }
 .tool-toggle input,
 .mcp-row input[type="checkbox"] {

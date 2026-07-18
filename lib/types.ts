@@ -1,4 +1,5 @@
 import type { ProviderId } from "./providers";
+import type { GeneratedFile } from "./stream";
 
 export type Mode = "ask" | "plan" | "build";
 
@@ -19,6 +20,7 @@ export type MessageVariant = {
   model?: string;
   provider?: ProviderId;
   toolActivity?: string[];
+  generatedFiles?: GeneratedFile[];
 };
 
 export type Message = {
@@ -35,6 +37,7 @@ export type Message = {
   variants?: MessageVariant[];
   variantIndex?: number;
   toolActivity?: string[];
+  generatedFiles?: GeneratedFile[];
 };
 
 export type Thread = {
@@ -48,6 +51,7 @@ export type Thread = {
 export type ProviderConfig = {
   apiKey: string;
   model: string;
+  priorityProcessing: boolean;
   webSearch: boolean;
   xSearch: boolean;
   codeInterpreter: boolean;

@@ -13,12 +13,31 @@ interface RtfFrame {
 }
 
 const SKIP_DESTINATIONS = new Set([
-  "fonttbl", "colortbl", "stylesheet", "info",
-  "pict", "object", "objdata", "objclass",
-  "fldinst", "header", "footer", "headerl", "headerr",
-  "footerl", "footerr", "headerf", "footerf",
-  "pgdsc", "listtable", "listoverridetable", "rsidtbl",
-  "revtbl", "generator", "themedata", "colorschememapping",
+  "fonttbl",
+  "colortbl",
+  "stylesheet",
+  "info",
+  "pict",
+  "object",
+  "objdata",
+  "objclass",
+  "fldinst",
+  "header",
+  "footer",
+  "headerl",
+  "headerr",
+  "footerl",
+  "footerr",
+  "headerf",
+  "footerf",
+  "pgdsc",
+  "listtable",
+  "listoverridetable",
+  "rsidtbl",
+  "revtbl",
+  "generator",
+  "themedata",
+  "colorschememapping",
 ]);
 
 /**
@@ -84,7 +103,11 @@ export function extractRtfText(rawText: string): string {
         while (i < n && /\d/.test(rawText[i])) numStr += rawText[i++];
         if (rawText[i] === " ") i++;
 
-        const num = numStr ? (neg ? -parseInt(numStr, 10) : parseInt(numStr, 10)) : null;
+        const num = numStr
+          ? neg
+            ? -parseInt(numStr, 10)
+            : parseInt(numStr, 10)
+          : null;
 
         if (SKIP_DESTINATIONS.has(word)) {
           top().skip = true;
@@ -93,7 +116,12 @@ export function extractRtfText(rawText: string): string {
 
         if (top().skip) continue;
 
-        if (word === "par" || word === "page" || word === "sect" || word === "column") {
+        if (
+          word === "par" ||
+          word === "page" ||
+          word === "sect" ||
+          word === "column"
+        ) {
           parts.push("\n");
         } else if (word === "line" || word === "row") {
           parts.push("\n");
@@ -109,18 +137,22 @@ export function extractRtfText(rawText: string): string {
             let toSkip = top().ucn;
             while (toSkip > 0 && i < n) {
               if (rawText[i] === "\\" && i + 1 < n && rawText[i + 1] === "'") {
-                i += 4; toSkip--;
+                i += 4;
+                toSkip--;
               } else if (rawText[i] === "\\") {
                 i++;
                 while (i < n && /[a-zA-Z]/.test(rawText[i])) i++;
                 while (i < n && /[\d-]/.test(rawText[i])) i++;
                 if (rawText[i] === " ") i++;
               } else if (rawText[i] === "{") {
-                i++; stack.push({ skip: true, ucn: top().ucn });
+                i++;
+                stack.push({ skip: true, ucn: top().ucn });
               } else if (rawText[i] === "}") {
-                i++; if (stack.length > 1) stack.pop();
+                i++;
+                if (stack.length > 1) stack.pop();
               } else {
-                i++; toSkip--;
+                i++;
+                toSkip--;
               }
             }
           }
@@ -131,7 +163,8 @@ export function extractRtfText(rawText: string): string {
         else if (word === "rquote") parts.push("’");
         else if (word === "ldblquote") parts.push("“");
         else if (word === "rdblquote") parts.push("”");
-        else if (word === "enspace" || word === "emspace" || word === "qmspace") parts.push(" ");
+        else if (word === "enspace" || word === "emspace" || word === "qmspace")
+          parts.push(" ");
       } else {
         i++;
       }
@@ -143,7 +176,10 @@ export function extractRtfText(rawText: string): string {
     }
   }
 
-  const result = parts.join("").replace(/\n{3,}/g, "\n\n").trim();
+  const result = parts
+    .join("")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   if (!result) throw new Error("No readable text found");
   return result;
 }

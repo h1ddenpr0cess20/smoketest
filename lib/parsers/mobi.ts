@@ -46,11 +46,18 @@ function decompressPalmDoc(data: Uint8Array): Uint8Array<ArrayBuffer> {
 
 function countBits(n: number): number {
   let count = 0;
-  while (n) { count += n & 1; n >>>= 1; }
+  while (n) {
+    count += n & 1;
+    n >>>= 1;
+  }
   return count;
 }
 
-function stripTrailingEntries(data: Uint8Array<ArrayBuffer>, numEntries: number, hasMultiByte: boolean): Uint8Array<ArrayBuffer> {
+function stripTrailingEntries(
+  data: Uint8Array<ArrayBuffer>,
+  numEntries: number,
+  hasMultiByte: boolean,
+): Uint8Array<ArrayBuffer> {
   let end = data.length;
 
   for (let e = 0; e < numEntries; e++) {
@@ -64,7 +71,10 @@ function stripTrailingEntries(data: Uint8Array<ArrayBuffer>, numEntries: number,
       if (b & 0x80) break;
     }
     end -= size;
-    if (end < 0) { end = 0; break; }
+    if (end < 0) {
+      end = 0;
+      break;
+    }
   }
 
   if (hasMultiByte && end > 0) {
@@ -85,7 +95,8 @@ export function extractMobiText(arrayBuffer: ArrayBuffer): string {
   const view = new DataView(arrayBuffer);
   const bytes = new Uint8Array(arrayBuffer);
 
-  if (arrayBuffer.byteLength < 78) throw new Error("File too small to be a valid MOBI");
+  if (arrayBuffer.byteLength < 78)
+    throw new Error("File too small to be a valid MOBI");
   const dbType = readStr(bytes, 60, 4);
   const dbCreator = readStr(bytes, 64, 4);
   if (dbType !== "BOOK" || dbCreator !== "MOBI") {
@@ -110,10 +121,14 @@ export function extractMobiText(arrayBuffer: ArrayBuffer): string {
 
   const mobiHeaderLen = view.getUint32(mobi + 4, false);
   const encoding = view.getUint32(mobi + 12, false);
-  const decoder = new TextDecoder(encoding === 65001 ? "utf-8" : "windows-1252");
+  const decoder = new TextDecoder(
+    encoding === 65001 ? "utf-8" : "windows-1252",
+  );
 
   if (compression === 17480) {
-    throw new Error("Huffman-compressed MOBI is not supported — convert to EPUB with Calibre");
+    throw new Error(
+      "Huffman-compressed MOBI is not supported — convert to EPUB with Calibre",
+    );
   }
   if (compression !== 1 && compression !== 2) {
     throw new Error(`Unsupported MOBI compression type: ${compression}`);

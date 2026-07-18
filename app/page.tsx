@@ -1,6 +1,18 @@
 "use client";
 
-import { ChangeEvent, Children, FormEvent, isValidElement, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChangeEvent,
+  Children,
+  FormEvent,
+  isValidElement,
+  KeyboardEvent,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -8,17 +20,38 @@ import {
   eventErrorMessage,
   eventText,
   finalResponseText,
+  generatedFilesFromEvent,
+  generatedFilesFromResponse,
   incompleteReason,
   isErrorEvent,
   outputTextFromJson,
   parseSseBlock,
   toolActivity,
+  type GeneratedFile,
 } from "@/lib/stream";
 import { PROVIDERS, PROVIDER_IDS, type ProviderId } from "@/lib/providers";
 import { COMMANDS, parseCommand } from "@/lib/commands";
-import type { Attachment, McpServerEntry, Message, MessageVariant, Mode, ProviderSettings, Thread } from "@/lib/types";
-import { MCP_LABEL_PATTERN, TOOL_SUPPORT, isValidMcpUrl, type ToolRequest } from "@/lib/tools";
-import { buildReferenceBlock, buildRetrievalQuery, EMBEDDING_BATCH_SIZE, resolveEmbeddingModel } from "@/lib/rag";
+import type {
+  Attachment,
+  McpServerEntry,
+  Message,
+  MessageVariant,
+  Mode,
+  ProviderSettings,
+  Thread,
+} from "@/lib/types";
+import {
+  MCP_LABEL_PATTERN,
+  TOOL_SUPPORT,
+  isValidMcpUrl,
+  type ToolRequest,
+} from "@/lib/tools";
+import {
+  buildReferenceBlock,
+  buildRetrievalQuery,
+  EMBEDDING_BATCH_SIZE,
+  resolveEmbeddingModel,
+} from "@/lib/rag";
 import {
   branchLocalDocIndex,
   deleteLocalDocIndex,
@@ -30,8 +63,19 @@ import {
   type EmbedFn,
 } from "@/lib/localRag";
 import { extractDocumentText, isExtractableDocument } from "@/lib/parsers";
-import { getDocumentSourceName, shouldIgnoreDirectoryPath, type FileWithRelativePath } from "@/lib/docPaths";
-import { EXPORT_FORMATS, exportFilename, exportMime, renderExport, type ExportFormatKey } from "@/lib/export";
+import {
+  getDocumentSourceName,
+  shouldIgnoreDirectoryPath,
+  type FileWithRelativePath,
+} from "@/lib/docPaths";
+import {
+  EXPORT_FORMATS,
+  exportFilename,
+  exportMime,
+  renderExport,
+  type ExportFormatKey,
+} from "@/lib/export";
+import { generatedFileDownloadName } from "@/lib/downloads";
 
 const STORAGE = {
   threads: "smoketest.threads.v1",
@@ -55,7 +99,10 @@ const MAX_EXTRACTED_CHARS = 200_000;
 const MAX_DIRECTORY_RAG_CHARS = 8_000_000;
 const MAX_DIRECTORY_INLINE_CHARS = 2_000_000;
 
-const MODE_COPY: Record<Mode, { label: string; mark: string; description: string; instructions: string }> = {
+const MODE_COPY: Record<
+  Mode,
+  { label: string; mark: string; description: string; instructions: string }
+> = {
   ask: {
     label: "Ask",
     mark: "?",
@@ -86,12 +133,21 @@ const STARTERS = [
 ];
 
 function id() {
-  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  );
 }
 
 function blankThread(): Thread {
   const now = Date.now();
-  return { id: id(), title: "Untitled session", createdAt: now, updatedAt: now, messages: [] };
+  return {
+    id: id(),
+    title: "Untitled session",
+    createdAt: now,
+    updatedAt: now,
+    messages: [],
+  };
 }
 
 function defaultSettings(): ProviderSettings {
@@ -101,6 +157,7 @@ function defaultSettings(): ProviderSettings {
       {
         apiKey: "",
         model: PROVIDERS[provider].defaultModel,
+        priorityProcessing: false,
         webSearch: TOOL_SUPPORT[provider].webSearch,
         xSearch: false,
         codeInterpreter: false,
@@ -119,14 +176,27 @@ function restoreSettings(saved: unknown): ProviderSettings {
   const merged = defaultSettings();
   if (saved && typeof saved === "object") {
     for (const provider of PROVIDER_IDS) {
-      const entry = (saved as Record<string, Record<string, unknown>>)[provider];
+      const entry = (saved as Record<string, Record<string, unknown>>)[
+        provider
+      ];
       if (!entry || typeof entry !== "object") continue;
-      if (typeof entry.apiKey === "string") merged[provider].apiKey = entry.apiKey;
+      if (typeof entry.apiKey === "string")
+        merged[provider].apiKey = entry.apiKey;
       if (typeof entry.model === "string") merged[provider].model = entry.model;
-      if (typeof entry.vectorStoreId === "string") merged[provider].vectorStoreId = entry.vectorStoreId;
-      if (typeof entry.embeddingModel === "string") merged[provider].embeddingModel = entry.embeddingModel;
-      for (const toggle of ["webSearch", "xSearch", "codeInterpreter", "fileSearch", "localRag"] as const) {
-        if (typeof entry[toggle] === "boolean") merged[provider][toggle] = entry[toggle];
+      if (typeof entry.vectorStoreId === "string")
+        merged[provider].vectorStoreId = entry.vectorStoreId;
+      if (typeof entry.embeddingModel === "string")
+        merged[provider].embeddingModel = entry.embeddingModel;
+      for (const toggle of [
+        "priorityProcessing",
+        "webSearch",
+        "xSearch",
+        "codeInterpreter",
+        "fileSearch",
+        "localRag",
+      ] as const) {
+        if (typeof entry[toggle] === "boolean")
+          merged[provider][toggle] = entry[toggle];
       }
     }
   }
@@ -202,14 +272,23 @@ function toInputMessages(messages: Message[]) {
     .map((message) => ({ role: message.role, content: message.content }));
 }
 
-function buildInput(messages: Message[], next: string, attachments: Attachment[]) {
+function buildInput(
+  messages: Message[],
+  next: string,
+  attachments: Attachment[],
+) {
   // Indexed-only attachments (directory trees living in the RAG index) carry
   // no inline text.
   const files = attachments
     .filter((file) => file.content.trim())
-    .map((file) => `--- ${file.name} ---\n${file.content}\n--- end ${file.name} ---`)
+    .map(
+      (file) =>
+        `--- ${file.name} ---\n${file.content}\n--- end ${file.name} ---`,
+    )
     .join("\n\n");
-  const content = files ? `ATTACHED CODE CONTEXT (read-only):\n${files}\n\n${next}` : next;
+  const content = files
+    ? `ATTACHED CODE CONTEXT (read-only):\n${files}\n\n${next}`
+    : next;
   return [...toInputMessages(messages), { role: "user" as const, content }];
 }
 
@@ -224,7 +303,10 @@ function groupAttachments(files: Attachment[]) {
     const key = slash > 0 ? `dir:${file.name.slice(0, slash)}` : file.id;
     let group = groups.get(key);
     if (!group) {
-      group = { label: slash > 0 ? `${file.name.slice(0, slash)}/` : file.name, ids: [] };
+      group = {
+        label: slash > 0 ? `${file.name.slice(0, slash)}/` : file.name,
+        ids: [],
+      };
       groups.set(key, group);
       order.push(key);
     }
@@ -246,6 +328,40 @@ async function copyText(text: string) {
   }
 }
 
+async function downloadGeneratedFile(
+  provider: ProviderId,
+  apiKey: string,
+  file: GeneratedFile,
+) {
+  const response = await fetch("/api/files", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      provider,
+      apiKey,
+      fileId: file.fileId,
+      containerId: file.containerId,
+    }),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as {
+      error?: string;
+    };
+    throw new Error(body.error || `File download failed (${response.status}).`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = generatedFileDownloadName(
+    file.filename,
+    response.headers.get("content-disposition"),
+    file.fileId,
+  );
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 2_000);
+}
+
 // Batched embeddings through the same-origin proxy, with wordmark's response
 // validation (order, dimensionality, finiteness).
 async function fetchEmbeddings(
@@ -265,13 +381,21 @@ async function fetchEmbeddings(
       signal,
     });
     if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { error?: string };
-      throw new Error(body.error || `Embeddings request failed (${response.status}).`);
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      throw new Error(
+        body.error || `Embeddings request failed (${response.status}).`,
+      );
     }
-    const data = (await response.json()) as { data?: { index: number; embedding: number[] }[] };
+    const data = (await response.json()) as {
+      data?: { index: number; embedding: number[] }[];
+    };
     const rows = Array.isArray(data?.data) ? data.data : [];
     if (rows.length !== batch.length) {
-      throw new Error(`Embeddings response returned ${rows.length} vector(s) for ${batch.length} input(s)`);
+      throw new Error(
+        `Embeddings response returned ${rows.length} vector(s) for ${batch.length} input(s)`,
+      );
     }
     const ordered = rows.slice().sort((a, b) => a.index - b.index);
     const dimensions = ordered[0]?.embedding?.length || 0;
@@ -285,7 +409,9 @@ async function fetchEmbeddings(
           row.embedding.every(Number.isFinite),
       );
     if (!valid) {
-      throw new Error("Embeddings response contained missing, malformed, or inconsistent vectors");
+      throw new Error(
+        "Embeddings response contained missing, malformed, or inconsistent vectors",
+      );
     }
     vectors.push(...ordered.map((row) => row.embedding));
   }
@@ -294,13 +420,21 @@ async function fetchEmbeddings(
 
 // Binds the proxy embedding call to a provider/key/model so lib/localRag can
 // stay transport-agnostic (wordmark passes the fetch through the same shape).
-function makeEmbed(provider: ProviderId, apiKey: string, model: string): EmbedFn {
-  return (texts, signal) => fetchEmbeddings(provider, apiKey, texts, model, signal);
+function makeEmbed(
+  provider: ProviderId,
+  apiKey: string,
+  model: string,
+): EmbedFn {
+  return (texts, signal) =>
+    fetchEmbeddings(provider, apiKey, texts, model, signal);
 }
 
 // Recursively collects Files from a dropped FileSystemEntry tree, tagging each
 // with its relative path (ported from wordmark's attachmentDragDrop).
-function readAllFilesFromEntry(entry: FileSystemEntry, path = ""): Promise<File[]> {
+function readAllFilesFromEntry(
+  entry: FileSystemEntry,
+  path = "",
+): Promise<File[]> {
   return new Promise((resolve) => {
     try {
       if (entry.isFile) {
@@ -318,7 +452,11 @@ function readAllFilesFromEntry(entry: FileSystemEntry, path = ""): Promise<File[
           reader.readEntries(
             (batch: FileSystemEntry[]) => {
               if (!batch || batch.length === 0) {
-                Promise.all(entries.map((child) => readAllFilesFromEntry(child, `${path}${entry.name}/`)))
+                Promise.all(
+                  entries.map((child) =>
+                    readAllFilesFromEntry(child, `${path}${entry.name}/`),
+                  ),
+                )
                   .then((results) => resolve(results.flat()))
                   .catch(() => resolve([]));
               } else {
@@ -346,9 +484,15 @@ type StreamPayload = {
   input: Array<{ role: "user" | "assistant"; content: string }>;
   instructions: string;
   reasoningEffort: string;
+  priorityProcessing: boolean;
   tools: ToolRequest;
 };
-type StreamOutcome = { text: string; error?: string; toolActivity: string[] };
+type StreamOutcome = {
+  text: string;
+  error?: string;
+  toolActivity: string[];
+  generatedFiles: GeneratedFile[];
+};
 
 // Streams one assistant turn through the local proxy, shared by send and
 // regenerate. Never throws: an abort surfaces as a plain partial result (the
@@ -366,6 +510,18 @@ async function streamAssistant(
   // arrives on output_item.done instead of duplicating the entry.
   const activities = new Map<string, string>();
   const activityList = () => [...activities.values()];
+  const files = new Map<string, GeneratedFile>();
+  const fileList = () => [...files.values()];
+  const mergeFiles = (items: GeneratedFile[]) => {
+    for (const file of items) {
+      const existing = files.get(file.fileId);
+      files.set(file.fileId, {
+        fileId: file.fileId,
+        containerId: file.containerId || existing?.containerId || null,
+        filename: file.filename || existing?.filename || null,
+      });
+    }
+  };
   const push = (force = false) => {
     const now = Date.now();
     if (!force && now - lastFlush < 80) return;
@@ -380,17 +536,36 @@ async function streamAssistant(
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
       return {
         text: "",
-        error: body.error || `${PROVIDERS[payload.provider].name} returned ${response.status}.`,
+        error:
+          body.error ||
+          `${PROVIDERS[payload.provider].name} returned ${response.status}.`,
         toolActivity: [],
+        generatedFiles: [],
       };
     }
-    if ((response.headers.get("content-type") || "").includes("application/json")) {
-      return { text: outputTextFromJson((await response.json()) as unknown), toolActivity: [] };
+    if (
+      (response.headers.get("content-type") || "").includes("application/json")
+    ) {
+      const body = (await response.json()) as unknown;
+      return {
+        text: outputTextFromJson(body),
+        toolActivity: [],
+        generatedFiles: generatedFilesFromResponse(body),
+      };
     }
-    if (!response.body) return { text: "", error: "The provider returned an empty stream.", toolActivity: [] };
+    if (!response.body) {
+      return {
+        text: "",
+        error: "The provider returned an empty stream.",
+        toolActivity: [],
+        generatedFiles: [],
+      };
+    }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -400,10 +575,13 @@ async function streamAssistant(
     const handleEvent = (event: ReturnType<typeof parseSseBlock>) => {
       if (!event) return;
       if (isErrorEvent(event)) {
-        throw new Error(eventErrorMessage(event) || "The provider failed while generating.");
+        throw new Error(
+          eventErrorMessage(event) || "The provider failed while generating.",
+        );
       }
       const fromFinal = finalResponseText(event);
       if (fromFinal) finalText = fromFinal;
+      mergeFiles(generatedFilesFromEvent(event));
       const reason = incompleteReason(event);
       if (reason) truncatedReason = reason;
       const activity = toolActivity(event);
@@ -428,35 +606,133 @@ async function streamAssistant(
     if (buffer.trim()) handleEvent(parseSseBlock(buffer));
     // Some providers only deliver text in the final response payload.
     if (!streamed && finalText) streamed = finalText;
-    if (truncatedReason) streamed += `${streamed ? "\n\n" : ""}_Response incomplete (${truncatedReason})._`;
-    return { text: streamed, toolActivity: activityList() };
+    if (truncatedReason)
+      streamed += `${streamed ? "\n\n" : ""}_Response incomplete (${truncatedReason})._`;
+    return {
+      text: streamed,
+      toolActivity: activityList(),
+      generatedFiles: fileList(),
+    };
   } catch (error) {
-    if (signal.aborted) return { text: streamed, toolActivity: activityList() };
+    if (signal.aborted) {
+      return {
+        text: streamed,
+        toolActivity: activityList(),
+        generatedFiles: fileList(),
+      };
+    }
     return {
       text: streamed,
       error: error instanceof Error ? error.message : "Something went wrong.",
       toolActivity: activityList(),
+      generatedFiles: fileList(),
     };
   }
 }
 
-function Icon({ name, size = 18 }: { name: "plus" | "settings" | "paperclip" | "send" | "stop" | "menu" | "trash" | "refresh" | "close" | "copy" | "branch" | "download" | "folder"; size?: number }) {
+function Icon({
+  name,
+  size = 18,
+}: {
+  name:
+    | "plus"
+    | "settings"
+    | "paperclip"
+    | "send"
+    | "stop"
+    | "menu"
+    | "trash"
+    | "refresh"
+    | "close"
+    | "copy"
+    | "branch"
+    | "download"
+    | "folder";
+  size?: number;
+}) {
   const paths: Record<typeof name, React.ReactNode> = {
-    plus: <><path d="M12 5v14M5 12h14" /></>,
-    settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></>,
-    paperclip: <path d="m20.5 11.5-8.8 8.8a6 6 0 0 1-8.5-8.5l9.5-9.5a4 4 0 0 1 5.7 5.7l-9.6 9.5A2 2 0 0 1 6 14.7l8.8-8.8" />,
-    send: <><path d="M22 12 3 4.5l3.4 7.5L3 19.5 22 12z" /><path d="M6.4 12H22" /></>,
+    plus: (
+      <>
+        <path d="M12 5v14M5 12h14" />
+      </>
+    ),
+    settings: (
+      <>
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" />
+      </>
+    ),
+    paperclip: (
+      <path d="m20.5 11.5-8.8 8.8a6 6 0 0 1-8.5-8.5l9.5-9.5a4 4 0 0 1 5.7 5.7l-9.6 9.5A2 2 0 0 1 6 14.7l8.8-8.8" />
+    ),
+    send: (
+      <>
+        <path d="M22 12 3 4.5l3.4 7.5L3 19.5 22 12z" />
+        <path d="M6.4 12H22" />
+      </>
+    ),
     stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
-    menu: <><path d="M4 7h16M4 12h16M4 17h16" /></>,
-    trash: <><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6" /></>,
-    refresh: <><path d="M20 7v5h-5" /><path d="M19 12a7 7 0 1 0-2 5" /></>,
-    close: <><path d="m6 6 12 12M18 6 6 18" /></>,
-    copy: <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></>,
-    branch: <><path d="M6 3v12" /><circle cx="18" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><path d="M18 9a9 9 0 0 1-9 9" /></>,
-    download: <><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>,
-    folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h9a1.5 1.5 0 0 1 1.5 1.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />,
+    menu: (
+      <>
+        <path d="M4 7h16M4 12h16M4 17h16" />
+      </>
+    ),
+    trash: (
+      <>
+        <path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6" />
+      </>
+    ),
+    refresh: (
+      <>
+        <path d="M20 7v5h-5" />
+        <path d="M19 12a7 7 0 1 0-2 5" />
+      </>
+    ),
+    close: (
+      <>
+        <path d="m6 6 12 12M18 6 6 18" />
+      </>
+    ),
+    copy: (
+      <>
+        <rect x="9" y="9" width="11" height="11" rx="2" />
+        <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+      </>
+    ),
+    branch: (
+      <>
+        <path d="M6 3v12" />
+        <circle cx="18" cy="6" r="2.5" />
+        <circle cx="6" cy="18" r="2.5" />
+        <path d="M18 9a9 9 0 0 1-9 9" />
+      </>
+    ),
+    download: (
+      <>
+        <path d="M12 3v11" />
+        <path d="m7 10 5 5 5-5" />
+        <path d="M5 21h14" />
+      </>
+    ),
+    folder: (
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h9a1.5 1.5 0 0 1 1.5 1.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+    ),
   };
-  return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
+  return (
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {paths[name]}
+    </svg>
+  );
 }
 
 // Fenced code blocks get a toolbar with the language label and a copy button,
@@ -472,7 +748,10 @@ function codeLanguage(children: React.ReactNode): string | null {
   return null;
 }
 
-function CodeBlock({ children, ...props }: React.ComponentPropsWithoutRef<"pre">) {
+function CodeBlock({
+  children,
+  ...props
+}: React.ComponentPropsWithoutRef<"pre">) {
   const [copied, setCopied] = useState(false);
   const codeRef = useRef<HTMLPreElement>(null);
   const language = codeLanguage(children);
@@ -487,11 +766,17 @@ function CodeBlock({ children, ...props }: React.ComponentPropsWithoutRef<"pre">
     <div className="code-block">
       <div className="code-toolbar">
         <span>{language ?? "code"}</span>
-        <button type="button" onClick={() => void copy()} aria-label="Copy code">
+        <button
+          type="button"
+          onClick={() => void copy()}
+          aria-label="Copy code"
+        >
           <Icon name="copy" size={12} /> {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <pre {...props} ref={codeRef}>{children}</pre>
+      <pre {...props} ref={codeRef}>
+        {children}
+      </pre>
     </div>
   );
 }
@@ -506,17 +791,22 @@ function ExportMenu({ thread }: { thread?: Thread }) {
   useEffect(() => {
     if (!open) return;
     const onDown = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+      if (rootRef.current && !rootRef.current.contains(event.target as Node))
+        setOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
-  const hasMessages = Boolean(thread?.messages.some((message) => message.content.trim()));
+  const hasMessages = Boolean(
+    thread?.messages.some((message) => message.content.trim()),
+  );
 
   const onExport = () => {
     if (!thread) return;
-    const blob = new Blob([renderExport(thread, format)], { type: `${exportMime(format)};charset=utf-8` });
+    const blob = new Blob([renderExport(thread, format)], {
+      type: `${exportMime(format)};charset=utf-8`,
+    });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -557,7 +847,9 @@ function ExportMenu({ thread }: { thread?: Thread }) {
               </button>
             ))}
           </div>
-          <button type="button" className="export-go" onClick={onExport}>Download .{format}</button>
+          <button type="button" className="export-go" onClick={onExport}>
+            Download .{format}
+          </button>
         </div>
       )}
     </div>
@@ -576,6 +868,7 @@ const MessageView = memo(function MessageView({
   onRegenerate,
   onBranch,
   onSelectVariant,
+  onDownloadGeneratedFile,
 }: {
   message: Message;
   fallbackProvider: ProviderId;
@@ -586,8 +879,16 @@ const MessageView = memo(function MessageView({
   onRegenerate: (messageId: string) => void;
   onBranch: (messageId: string) => void;
   onSelectVariant: (messageId: string, index: number) => void;
+  onDownloadGeneratedFile: (
+    provider: ProviderId,
+    file: GeneratedFile,
+  ) => Promise<void>;
 }) {
   const [copied, setCopied] = useState(false);
+  const [downloadingFileId, setDownloadingFileId] = useState<string | null>(
+    null,
+  );
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const copy = async () => {
     await copyText(message.content);
     setCopied(true);
@@ -595,31 +896,60 @@ const MessageView = memo(function MessageView({
   };
   const variantCount = message.variants?.length ?? 0;
   const variantIndex = message.variantIndex ?? 0;
-  const messageProvider = PROVIDERS[message.provider ?? fallbackProvider] ?? PROVIDERS[fallbackProvider];
+  const messageProviderId = message.provider ?? fallbackProvider;
+  const messageProvider =
+    PROVIDERS[messageProviderId] ?? PROVIDERS[fallbackProvider];
+  const downloadFile = async (file: GeneratedFile) => {
+    setDownloadingFileId(file.fileId);
+    setDownloadError(null);
+    try {
+      await onDownloadGeneratedFile(messageProviderId, file);
+    } catch (error) {
+      setDownloadError(
+        error instanceof Error ? error.message : "File download failed.",
+      );
+    } finally {
+      setDownloadingFileId(null);
+    }
+  };
   return (
-    <article className={`message ${message.role} ${message.error ? "message-error" : ""}`}>
+    <article
+      className={`message ${message.role} ${message.error ? "message-error" : ""}`}
+    >
       <div className="message-rail">
-        <span className="avatar">{message.role === "user" ? "YOU" : messageProvider.shortName}</span>
+        <span className="avatar">
+          {message.role === "user" ? "YOU" : messageProvider.shortName}
+        </span>
         <span className="rail-line" />
       </div>
       <div className="message-body">
         <div className="message-meta">
           <strong>{message.role === "user" ? "You" : "smoketest"}</strong>
           <span>{timeLabel(message.createdAt)}</span>
-          {message.role === "assistant" && <><span>·</span><span>{message.model}</span></>}
+          {message.role === "assistant" && (
+            <>
+              <span>·</span>
+              <span>{message.model}</span>
+            </>
+          )}
         </div>
         {message.attachments?.length ? (
           <div className="message-files">
             {groupAttachments(message.attachments).map((group) => (
               <span key={group.key}>
-                @{group.ids.length > 1 ? `${group.label} · ${group.ids.length} files` : group.label}
+                @
+                {group.ids.length > 1
+                  ? `${group.label} · ${group.ids.length} files`
+                  : group.label}
               </span>
             ))}
           </div>
         ) : null}
         {message.toolActivity?.length ? (
           <div className="tool-activity" aria-label="Tool activity">
-            {message.toolActivity.map((label, index) => <span key={`${index}-${label}`}>⚙ {label}</span>)}
+            {message.toolActivity.map((label, index) => (
+              <span key={`${index}-${label}`}>⚙ {label}</span>
+            ))}
           </div>
         ) : null}
         {message.content ? (
@@ -642,23 +972,91 @@ const MessageView = memo(function MessageView({
             ) : (
               <p className="user-text">{message.content}</p>
             )}
-            {isStreaming && <span className="stream-cursor" aria-label="Writing" />}
+            {isStreaming && (
+              <span className="stream-cursor" aria-label="Writing" />
+            )}
           </div>
         ) : (
-          <div className="thinking"><span /><span /><span /><small>reading the smoke</small></div>
+          <div className="thinking">
+            <span />
+            <span />
+            <span />
+            <small>reading the smoke</small>
+          </div>
         )}
+        {message.generatedFiles?.length ? (
+          <div className="generated-files" aria-label="Code Interpreter files">
+            <span className="generated-files-title">
+              Code Interpreter files
+            </span>
+            <div className="generated-files-list">
+              {message.generatedFiles.map((file) => (
+                <button
+                  key={file.fileId}
+                  type="button"
+                  disabled={downloadingFileId !== null}
+                  onClick={() => void downloadFile(file)}
+                  title={`Download ${file.filename || file.fileId}`}
+                >
+                  <Icon name="download" size={14} />
+                  <span>
+                    {downloadingFileId === file.fileId
+                      ? "Downloading…"
+                      : file.filename || file.fileId}
+                  </span>
+                </button>
+              ))}
+            </div>
+            {downloadError && <small role="alert">{downloadError}</small>}
+          </div>
+        ) : null}
         {message.content && !isStreaming ? (
           <div className="message-actions">
-            <button onClick={() => void copy()} aria-label="Copy message"><Icon name="copy" size={13} /> {copied ? "Copied" : "Copy"}</button>
+            <button onClick={() => void copy()} aria-label="Copy message">
+              <Icon name="copy" size={13} /> {copied ? "Copied" : "Copy"}
+            </button>
             {message.role === "assistant" && (
               <>
-                <button onClick={() => onRegenerate(message.id)} disabled={busy} aria-label="Regenerate reply"><Icon name="refresh" size={13} /> Regenerate</button>
-                <button onClick={() => onBranch(message.id)} disabled={busy} aria-label="Branch session from here"><Icon name="branch" size={13} /> Branch</button>
+                <button
+                  onClick={() => onRegenerate(message.id)}
+                  disabled={busy}
+                  aria-label="Regenerate reply"
+                >
+                  <Icon name="refresh" size={13} /> Regenerate
+                </button>
+                <button
+                  onClick={() => onBranch(message.id)}
+                  disabled={busy}
+                  aria-label="Branch session from here"
+                >
+                  <Icon name="branch" size={13} /> Branch
+                </button>
                 {variantCount > 1 && (
-                  <span className="message-versions" aria-label={`Reply version ${variantIndex + 1} of ${variantCount}`}>
-                    <button disabled={busy || variantIndex <= 0} onClick={() => onSelectVariant(message.id, variantIndex - 1)} aria-label="Previous reply version">‹</button>
-                    <span>{variantIndex + 1}/{variantCount}</span>
-                    <button disabled={busy || variantIndex >= variantCount - 1} onClick={() => onSelectVariant(message.id, variantIndex + 1)} aria-label="Next reply version">›</button>
+                  <span
+                    className="message-versions"
+                    aria-label={`Reply version ${variantIndex + 1} of ${variantCount}`}
+                  >
+                    <button
+                      disabled={busy || variantIndex <= 0}
+                      onClick={() =>
+                        onSelectVariant(message.id, variantIndex - 1)
+                      }
+                      aria-label="Previous reply version"
+                    >
+                      ‹
+                    </button>
+                    <span>
+                      {variantIndex + 1}/{variantCount}
+                    </span>
+                    <button
+                      disabled={busy || variantIndex >= variantCount - 1}
+                      onClick={() =>
+                        onSelectVariant(message.id, variantIndex + 1)
+                      }
+                      aria-label="Next reply version"
+                    >
+                      ›
+                    </button>
                   </span>
                 )}
               </>
@@ -674,11 +1072,26 @@ const MessageView = memo(function MessageView({
           <div className="plan-actions" aria-label="Plan approval">
             {message.planState === "proposed" ? (
               <>
-                <button onClick={() => onApprovePlan(message.id)} disabled={busy}>Approve & build</button>
-                <button className="secondary" onClick={() => onRevisePlan(message.id)} disabled={busy}>Request changes</button>
+                <button
+                  onClick={() => onApprovePlan(message.id)}
+                  disabled={busy}
+                >
+                  Approve & build
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() => onRevisePlan(message.id)}
+                  disabled={busy}
+                >
+                  Request changes
+                </button>
               </>
             ) : (
-              <span>{message.planState === "approved" ? "Plan approved" : "Changes requested"}</span>
+              <span>
+                {message.planState === "approved"
+                  ? "Plan approved"
+                  : "Changes requested"}
+              </span>
             )}
           </div>
         ) : null}
@@ -708,8 +1121,14 @@ export default function Home() {
   const [mcpDraft, setMcpDraft] = useState({ label: "", url: "" });
   // Attachment status lines are keyed by thread so switching sessions shows
   // only the active thread's status without an effect-driven reset.
-  const [attachNote, setAttachNote] = useState<{ threadId: string; text: string } | null>(null);
-  const [ragStatus, setRagStatus] = useState<{ threadId: string; text: string } | null>(null);
+  const [attachNote, setAttachNote] = useState<{
+    threadId: string;
+    text: string;
+  } | null>(null);
+  const [ragStatus, setRagStatus] = useState<{
+    threadId: string;
+    text: string;
+  } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [streamingId, setStreamingId] = useState("");
@@ -732,7 +1151,9 @@ export default function Home() {
   useEffect(() => {
     const restoredThreads = (() => {
       try {
-        return restoreThreads(JSON.parse(localStorage.getItem(STORAGE.threads) || "null"));
+        return restoreThreads(
+          JSON.parse(localStorage.getItem(STORAGE.threads) || "null"),
+        );
       } catch {
         return [blankThread()];
       }
@@ -743,22 +1164,30 @@ export default function Home() {
     let restoredTheme: "smoke" | "ember" | null = null;
     let restoredReasoning: string | null = null;
     try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE.settings) || "null") as unknown;
+      const saved = JSON.parse(
+        localStorage.getItem(STORAGE.settings) || "null",
+      ) as unknown;
       if (saved) restoredSettings = restoreSettings(saved);
       const savedProvider = localStorage.getItem(STORAGE.provider);
-      if (savedProvider && PROVIDER_IDS.includes(savedProvider as ProviderId)) restoredProvider = savedProvider as ProviderId;
+      if (savedProvider && PROVIDER_IDS.includes(savedProvider as ProviderId))
+        restoredProvider = savedProvider as ProviderId;
       const savedMode = localStorage.getItem(STORAGE.mode);
-      if (savedMode && ["ask", "plan", "build"].includes(savedMode)) restoredMode = savedMode as Mode;
+      if (savedMode && ["ask", "plan", "build"].includes(savedMode))
+        restoredMode = savedMode as Mode;
       const savedTheme = localStorage.getItem(STORAGE.theme);
-      if (savedTheme === "smoke" || savedTheme === "ember") restoredTheme = savedTheme;
+      if (savedTheme === "smoke" || savedTheme === "ember")
+        restoredTheme = savedTheme;
       const savedReasoning = localStorage.getItem(STORAGE.reasoning);
-      if (savedReasoning && ["low", "medium", "high"].includes(savedReasoning)) restoredReasoning = savedReasoning;
+      if (savedReasoning && ["low", "medium", "high"].includes(savedReasoning))
+        restoredReasoning = savedReasoning;
     } catch {
       // Invalid local state falls back to defaults.
     }
     const restoredMcp = (() => {
       try {
-        return restoreMcpServers(JSON.parse(localStorage.getItem(STORAGE.mcp) || "null"));
+        return restoreMcpServers(
+          JSON.parse(localStorage.getItem(STORAGE.mcp) || "null"),
+        );
       } catch {
         return [];
       }
@@ -817,8 +1246,12 @@ export default function Home() {
     const onScroll = () => {
       autoScrollRef.current = nearBottom();
     };
-    window.addEventListener("scroll", onScroll, { passive: true, capture: true });
-    return () => window.removeEventListener("scroll", onScroll, { capture: true });
+    window.addEventListener("scroll", onScroll, {
+      passive: true,
+      capture: true,
+    });
+    return () =>
+      window.removeEventListener("scroll", onScroll, { capture: true });
   }, []);
 
   useEffect(() => {
@@ -831,7 +1264,9 @@ export default function Home() {
 
   useEffect(() => {
     if (!autoScrollRef.current) return;
-    messagesEndRef.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth" });
+    messagesEndRef.current?.scrollIntoView({
+      behavior: streaming ? "auto" : "smooth",
+    });
   }, [activeThread?.messages, streaming]);
 
   useEffect(() => {
@@ -844,7 +1279,10 @@ export default function Home() {
   useEffect(() => {
     if (!attachMenuOpen) return;
     const onDown = (event: MouseEvent) => {
-      if (attachMenuRef.current && !attachMenuRef.current.contains(event.target as Node)) {
+      if (
+        attachMenuRef.current &&
+        !attachMenuRef.current.contains(event.target as Node)
+      ) {
         setAttachMenuOpen(false);
       }
     };
@@ -875,7 +1313,9 @@ export default function Home() {
     if (threadId === activeId) setActiveId(next[0].id);
   }
 
-  function updateProviderSettings(patch: Partial<ProviderSettings[ProviderId]>) {
+  function updateProviderSettings(
+    patch: Partial<ProviderSettings[ProviderId]>,
+  ) {
     setSettings((current) => ({
       ...current,
       [provider]: { ...current[provider], ...patch },
@@ -888,8 +1328,13 @@ export default function Home() {
       xSearch: currentSettings.xSearch,
       codeInterpreter: currentSettings.codeInterpreter,
       fileSearch: currentSettings.fileSearch,
-      vectorStoreIds: currentSettings.vectorStoreId.split(",").map((idValue) => idValue.trim()).filter(Boolean),
-      mcpServers: mcpServers.filter((server) => server.enabled).map(({ label, url }) => ({ label, url })),
+      vectorStoreIds: currentSettings.vectorStoreId
+        .split(",")
+        .map((idValue) => idValue.trim())
+        .filter(Boolean),
+      mcpServers: mcpServers
+        .filter((server) => server.enabled)
+        .map(({ label, url }) => ({ label, url })),
     };
   }
 
@@ -897,7 +1342,10 @@ export default function Home() {
     const label = mcpDraft.label.trim();
     const url = mcpDraft.url.trim();
     if (!MCP_LABEL_PATTERN.test(label) || !isValidMcpUrl(url)) return;
-    setMcpServers((current) => [...current, { id: id(), label, url, enabled: true }]);
+    setMcpServers((current) => [
+      ...current,
+      { id: id(), label, url, enabled: true },
+    ]);
     setMcpDraft({ label: "", url: "" });
   }
 
@@ -922,23 +1370,35 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ provider, apiKey: currentApiKey }),
         });
-        const body = (await response.json()) as { models?: string[]; error?: string };
+        const body = (await response.json()) as {
+          models?: string[];
+          error?: string;
+        };
         if (discoverSeq.current !== seq) return;
         if (!response.ok) throw new Error(body.error || "Connection failed");
         const available = body.models ?? [];
         setModels(available);
-        setModelStatus(available.length ? `${available.length} models available` : "Connected — no models reported");
+        setModelStatus(
+          available.length
+            ? `${available.length} models available`
+            : "Connected — no models reported",
+        );
         if (available[0]) {
           setSettings((current) =>
             current[provider].model
               ? current
-              : { ...current, [provider]: { ...current[provider], model: available[0] } },
+              : {
+                  ...current,
+                  [provider]: { ...current[provider], model: available[0] },
+                },
           );
         }
       } catch (error) {
         if (discoverSeq.current !== seq) return;
         setModels([]);
-        setModelStatus(error instanceof Error ? error.message : "Connection failed");
+        setModelStatus(
+          error instanceof Error ? error.message : "Connection failed",
+        );
       }
     }, 300);
     return () => clearTimeout(timer);
@@ -956,7 +1416,9 @@ export default function Home() {
     // byte lands in the prompt and localStorage. Eligibility is the provider
     // setting alone — never the model list having loaded yet.
     const ragEligible = currentProvider.local && currentSettings.localRag;
-    const embeddingModel = ragEligible ? resolveEmbeddingModel(currentSettings.embeddingModel, models) : null;
+    const embeddingModel = ragEligible
+      ? resolveEmbeddingModel(currentSettings.embeddingModel, models)
+      : null;
     const limit = fromDirectory
       ? ragEligible
         ? MAX_DIRECTORY_FILES_RAG
@@ -989,7 +1451,8 @@ export default function Home() {
           skipped++;
           continue;
         }
-        if (text.length > MAX_EXTRACTED_CHARS) text = text.slice(0, MAX_EXTRACTED_CHARS);
+        if (text.length > MAX_EXTRACTED_CHARS)
+          text = text.slice(0, MAX_EXTRACTED_CHARS);
         if (totalChars + text.length > charBudget) {
           skipped++;
           continue;
@@ -1008,16 +1471,25 @@ export default function Home() {
     if (next.length) {
       // Re-attaching a path replaces its previous composer entry.
       const replaced = new Set(next.map((file) => file.name));
-      setAttachments((current) => [...current.filter((file) => !replaced.has(file.name)), ...next]);
+      setAttachments((current) => [
+        ...current.filter((file) => !replaced.has(file.name)),
+        ...next,
+      ]);
     }
     setAttachNote(
       skipped
-        ? { threadId, text: `${next.length} attached · ${skipped} skipped (unsupported, too large, or over budget)` }
+        ? {
+            threadId,
+            text: `${next.length} attached · ${skipped} skipped (unsupported, too large, or over budget)`,
+          }
         : null,
     );
 
     if (docs.length && embeddingModel) {
-      setRagStatus({ threadId, text: `Indexing ${docs.length} file${docs.length === 1 ? "" : "s"}…` });
+      setRagStatus({
+        threadId,
+        text: `Indexing ${docs.length} file${docs.length === 1 ? "" : "s"}…`,
+      });
       // Tracked so a send that races the attach-time indexing waits for it
       // instead of retrieving from a partial index.
       const operation = (async () => {
@@ -1031,10 +1503,14 @@ export default function Home() {
         // attachments drop their inline text (keeps localStorage small).
         if (fromDirectory) {
           const failed = new Set(result.failed);
-          const indexedNames = new Set(docs.map((doc) => doc.name).filter((name) => !failed.has(name)));
+          const indexedNames = new Set(
+            docs.map((doc) => doc.name).filter((name) => !failed.has(name)),
+          );
           setAttachments((current) =>
             current.map((file) =>
-              indexedNames.has(file.name) && file.content ? { ...file, content: "", indexedOnly: true } : file,
+              indexedNames.has(file.name) && file.content
+                ? { ...file, content: "", indexedOnly: true }
+                : file,
             ),
           );
         }
@@ -1053,7 +1529,10 @@ export default function Home() {
       } catch (error) {
         setRagStatus({
           threadId,
-          text: error instanceof Error ? `Indexing failed: ${error.message}` : "Indexing failed.",
+          text:
+            error instanceof Error
+              ? `Indexing failed: ${error.message}`
+              : "Indexing failed.",
         });
       } finally {
         if (indexingRef.current === operation) indexingRef.current = null;
@@ -1061,7 +1540,10 @@ export default function Home() {
     }
   }
 
-  async function onFiles(event: ChangeEvent<HTMLInputElement>, fromDirectory = false) {
+  async function onFiles(
+    event: ChangeEvent<HTMLInputElement>,
+    fromDirectory = false,
+  ) {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
     await ingestFiles(files, fromDirectory);
@@ -1092,11 +1574,17 @@ export default function Home() {
     } else {
       files = Array.from(event.dataTransfer?.files ?? []);
     }
-    const fromDirectory = sawDirectory || files.some((file) => getDocumentSourceName(file).includes("/"));
+    const fromDirectory =
+      sawDirectory ||
+      files.some((file) => getDocumentSourceName(file).includes("/"));
     await ingestFiles(files, fromDirectory);
   }
 
-  function patchMessage(threadId: string, messageId: string, patch: Partial<Message>) {
+  function patchMessage(
+    threadId: string,
+    messageId: string,
+    patch: Partial<Message>,
+  ) {
     setThreads((current) =>
       current.map((thread) =>
         thread.id === threadId
@@ -1114,11 +1602,21 @@ export default function Home() {
 
   function appendNotice(content: string, isError = true) {
     if (!activeThread) return;
-    const notice: Message = { id: id(), role: "assistant", content, createdAt: Date.now(), error: isError };
+    const notice: Message = {
+      id: id(),
+      role: "assistant",
+      content,
+      createdAt: Date.now(),
+      error: isError,
+    };
     setThreads((current) =>
       current.map((thread) =>
         thread.id === activeThread.id
-          ? { ...thread, updatedAt: Date.now(), messages: [...thread.messages, notice] }
+          ? {
+              ...thread,
+              updatedAt: Date.now(),
+              messages: [...thread.messages, notice],
+            }
           : thread,
       ),
     );
@@ -1137,7 +1635,10 @@ export default function Home() {
       }
       if (command.type === "effort") {
         if (command.effort) setReasoning(command.effort);
-        else appendNotice("Usage: `/effort low`, `/effort medium`, or `/effort high`.");
+        else
+          appendNotice(
+            "Usage: `/effort low`, `/effort medium`, or `/effort high`.",
+          );
         setDraft("");
         return;
       }
@@ -1148,11 +1649,16 @@ export default function Home() {
       }
       if (command.type === "search") {
         if (!TOOL_SUPPORT[provider].webSearch) {
-          appendNotice(`${currentProvider.name} has no provider-managed web search.`);
+          appendNotice(
+            `${currentProvider.name} has no provider-managed web search.`,
+          );
         } else {
           const enabled = command.enabled ?? !currentSettings.webSearch;
           updateProviderSettings({ webSearch: enabled });
-          appendNotice(`Web search ${enabled ? "enabled" : "disabled"}.`, false);
+          appendNotice(
+            `Web search ${enabled ? "enabled" : "disabled"}.`,
+            false,
+          );
         }
         setDraft("");
         return;
@@ -1173,7 +1679,10 @@ export default function Home() {
       prompt = command.prompt;
     }
 
-    if (!currentSettings.model.trim() || (currentProvider.apiKeyRequired && !currentSettings.apiKey.trim())) {
+    if (
+      !currentSettings.model.trim() ||
+      (currentProvider.apiKeyRequired && !currentSettings.apiKey.trim())
+    ) {
       setSettingsOpen(true);
       return;
     }
@@ -1239,26 +1748,46 @@ export default function Home() {
       let requestInput = buildInput(priorMessages, prompt, inlineAttachments);
       let ragLabels: string[] = [];
       if (currentProvider.local && currentSettings.localRag) {
-        const embeddingModel = resolveEmbeddingModel(currentSettings.embeddingModel, models);
+        const embeddingModel = resolveEmbeddingModel(
+          currentSettings.embeddingModel,
+          models,
+        );
         if (embeddingModel && threadAttachments.length) {
           try {
-            const embed = makeEmbed(provider, currentSettings.apiKey, embeddingModel);
+            const embed = makeEmbed(
+              provider,
+              currentSettings.apiKey,
+              embeddingModel,
+            );
             await restoreLocalDocIndex(threadId);
             // Never retrieve from a half-built index while attach-time
             // indexing is still running.
-            if (indexingRef.current) await indexingRef.current.catch(() => null);
+            if (indexingRef.current)
+              await indexingRef.current.catch(() => null);
             // Attachments the index doesn't know yet (attach-time indexing was
             // off or unavailable, a reload on another browser, older threads)
             // are indexed from their stored text before retrieval.
             const indexedNames = new Set(getIndexedDocumentNames(threadId));
-            const missingByName = new Map<string, { name: string; text: string }>();
+            const missingByName = new Map<
+              string,
+              { name: string; text: string }
+            >();
             for (const file of threadAttachments) {
               if (!indexedNames.has(file.name) && file.content.trim()) {
-                missingByName.set(file.name, { name: file.name, text: file.content });
+                missingByName.set(file.name, {
+                  name: file.name,
+                  text: file.content,
+                });
               }
             }
             if (missingByName.size) {
-              await indexDocuments(threadId, [...missingByName.values()], embeddingModel, embed, controller.signal);
+              await indexDocuments(
+                threadId,
+                [...missingByName.values()],
+                embeddingModel,
+                embed,
+                controller.signal,
+              );
             }
             if (getLocalDocIndexStats(threadId).chunks) {
               const priorUserTexts = priorMessages
@@ -1274,12 +1803,21 @@ export default function Home() {
               // dominate retrieval instead.
               const lastAssistant = [...priorMessages]
                 .reverse()
-                .find((message) => message.role === "assistant" && !message.error && message.content);
+                .find(
+                  (message) =>
+                    message.role === "assistant" &&
+                    !message.error &&
+                    message.content,
+                );
               const latestPlan =
-                activeMode === "build" && lastAssistant?.mode === "plan" ? lastAssistant : undefined;
+                activeMode === "build" && lastAssistant?.mode === "plan"
+                  ? lastAssistant
+                  : undefined;
               const query = buildRetrievalQuery(
                 priorUserTexts,
-                latestPlan ? `${latestPlan.content.slice(0, 4000)}\n\n${prompt}` : prompt,
+                latestPlan
+                  ? `${latestPlan.content.slice(0, 4000)}\n\n${prompt}`
+                  : prompt,
               );
               const retrieved = await retrieveRelevantChunks(
                 threadId,
@@ -1291,13 +1829,22 @@ export default function Home() {
               const names = getIndexedDocumentNames(threadId);
               const block = buildReferenceBlock(retrieved, names, prompt);
               if (block) {
-                requestInput = buildInput(priorMessages, `${prompt}${block}`, []);
-                ragLabels = [`Local RAG: ${retrieved.length} chunks · ${names.length} file${names.length === 1 ? "" : "s"}`];
+                requestInput = buildInput(
+                  priorMessages,
+                  `${prompt}${block}`,
+                  [],
+                );
+                ragLabels = [
+                  `Local RAG: ${retrieved.length} chunks · ${names.length} file${names.length === 1 ? "" : "s"}`,
+                ];
               }
             }
           } catch (error) {
             if (controller.signal.aborted) {
-              patchMessage(threadId, assistantId, { content: "Generation stopped.", planState: undefined });
+              patchMessage(threadId, assistantId, {
+                content: "Generation stopped.",
+                planState: undefined,
+              });
               return;
             }
             // Retrieval is best-effort; the inline-attachment input stands.
@@ -1308,7 +1855,8 @@ export default function Home() {
           }
         }
       }
-      if (ragLabels.length) patchMessage(threadId, assistantId, { toolActivity: ragLabels });
+      if (ragLabels.length)
+        patchMessage(threadId, assistantId, { toolActivity: ragLabels });
 
       const outcome = await streamAssistant(
         {
@@ -1318,11 +1866,15 @@ export default function Home() {
           input: requestInput,
           instructions: `${MODE_COPY[activeMode].instructions}\n\n${CONTEXT_GUARDRAIL}`,
           reasoningEffort: reasoning,
+          priorityProcessing: currentSettings.priorityProcessing,
           tools: currentToolRequest(),
         },
         controller.signal,
         (text, usedTools) =>
-          patchMessage(threadId, assistantId, { content: text, toolActivity: [...ragLabels, ...usedTools] }),
+          patchMessage(threadId, assistantId, {
+            content: text,
+            toolActivity: [...ragLabels, ...usedTools],
+          }),
       );
       const finalActivity = [...ragLabels, ...outcome.toolActivity];
       if (controller.signal.aborted) {
@@ -1330,21 +1882,29 @@ export default function Home() {
         // tail. A stopped or failed plan is incomplete — never offer the
         // approve/revise actions on it.
         patchMessage(threadId, assistantId, {
-          content: outcome.text ? `${outcome.text}\n\n_Generation stopped._` : "Generation stopped.",
+          content: outcome.text
+            ? `${outcome.text}\n\n_Generation stopped._`
+            : "Generation stopped.",
           toolActivity: finalActivity,
+          generatedFiles: outcome.generatedFiles,
           planState: undefined,
         });
       } else if (outcome.error) {
         patchMessage(threadId, assistantId, {
-          content: outcome.text ? `${outcome.text}\n\n${outcome.error}` : outcome.error,
+          content: outcome.text
+            ? `${outcome.text}\n\n${outcome.error}`
+            : outcome.error,
           error: true,
           toolActivity: finalActivity,
+          generatedFiles: outcome.generatedFiles,
           planState: undefined,
         });
       } else {
         patchMessage(threadId, assistantId, {
-          content: outcome.text || "The provider completed without text output.",
+          content:
+            outcome.text || "The provider completed without text output.",
           toolActivity: finalActivity,
+          generatedFiles: outcome.generatedFiles,
         });
       }
     } finally {
@@ -1361,10 +1921,15 @@ export default function Home() {
   async function regenerate(messageId: string) {
     if (streaming || !activeThread) return;
     const threadId = activeThread.id;
-    const index = activeThread.messages.findIndex((message) => message.id === messageId);
+    const index = activeThread.messages.findIndex(
+      (message) => message.id === messageId,
+    );
     const target = activeThread.messages[index];
     if (!target || target.role !== "assistant") return;
-    if (!currentSettings.model.trim() || (currentProvider.apiKeyRequired && !currentSettings.apiKey.trim())) {
+    if (
+      !currentSettings.model.trim() ||
+      (currentProvider.apiKeyRequired && !currentSettings.apiKey.trim())
+    ) {
       setSettingsOpen(true);
       return;
     }
@@ -1372,7 +1937,9 @@ export default function Home() {
     // prompts, so the thread's attachments are re-inlined into the last user
     // turn — without this, regenerating loses file access on every provider.
     const prior = activeThread.messages.slice(0, index);
-    const lastUserIndex = prior.findLastIndex((message) => message.role === "user" && !message.error);
+    const lastUserIndex = prior.findLastIndex(
+      (message) => message.role === "user" && !message.error,
+    );
     const attachmentByName = new Map<string, Attachment>();
     for (const message of prior) {
       for (const file of message.attachments ?? []) {
@@ -1382,9 +1949,11 @@ export default function Home() {
     const input =
       lastUserIndex >= 0
         ? [
-            ...buildInput(prior.slice(0, lastUserIndex), prior[lastUserIndex].content, [
-              ...attachmentByName.values(),
-            ]),
+            ...buildInput(
+              prior.slice(0, lastUserIndex),
+              prior[lastUserIndex].content,
+              [...attachmentByName.values()],
+            ),
             ...toInputMessages(prior.slice(lastUserIndex + 1)),
           ]
         : toInputMessages(prior);
@@ -1395,11 +1964,20 @@ export default function Home() {
       model: target.model,
       provider: target.provider,
       toolActivity: target.toolActivity,
+      generatedFiles: target.generatedFiles,
     };
-    const variants = target.variants?.length ? [...target.variants] : [snapshot];
+    const variants = target.variants?.length
+      ? [...target.variants]
+      : [snapshot];
     const requestMode = target.mode ?? mode;
 
-    patchMessage(threadId, messageId, { content: "", error: false, planState: undefined, toolActivity: [] });
+    patchMessage(threadId, messageId, {
+      content: "",
+      error: false,
+      planState: undefined,
+      toolActivity: [],
+      generatedFiles: [],
+    });
     setStreaming(true);
     setStreamingId(messageId);
     const controller = new AbortController();
@@ -1413,10 +1991,15 @@ export default function Home() {
           input,
           instructions: `${MODE_COPY[requestMode].instructions}\n\n${CONTEXT_GUARDRAIL}`,
           reasoningEffort: reasoning,
+          priorityProcessing: currentSettings.priorityProcessing,
           tools: currentToolRequest(),
         },
         controller.signal,
-        (text, usedTools) => patchMessage(threadId, messageId, { content: text, toolActivity: usedTools }),
+        (text, usedTools) =>
+          patchMessage(threadId, messageId, {
+            content: text,
+            toolActivity: usedTools,
+          }),
       );
       if (controller.signal.aborted || outcome.error) {
         patchMessage(threadId, messageId, {
@@ -1424,15 +2007,18 @@ export default function Home() {
           model: snapshot.model,
           provider: snapshot.provider,
           toolActivity: snapshot.toolActivity,
+          generatedFiles: snapshot.generatedFiles,
         });
         if (outcome.error) appendNotice(outcome.error);
       } else {
-        const content = outcome.text || "The provider completed without text output.";
+        const content =
+          outcome.text || "The provider completed without text output.";
         const variant: MessageVariant = {
           content,
           model: currentSettings.model,
           provider,
           toolActivity: outcome.toolActivity,
+          generatedFiles: outcome.generatedFiles,
         };
         patchMessage(threadId, messageId, {
           content,
@@ -1442,6 +2028,7 @@ export default function Home() {
           variantIndex: variants.length,
           planState: requestMode === "plan" ? "proposed" : undefined,
           toolActivity: outcome.toolActivity,
+          generatedFiles: outcome.generatedFiles,
         });
       }
     } finally {
@@ -1453,7 +2040,9 @@ export default function Home() {
 
   function selectVariant(messageId: string, index: number) {
     if (streaming || !activeThread) return;
-    const target = activeThread.messages.find((message) => message.id === messageId);
+    const target = activeThread.messages.find(
+      (message) => message.id === messageId,
+    );
     const variant = target?.variants?.[index];
     if (!variant) return;
     patchMessage(activeThread.id, messageId, {
@@ -1461,6 +2050,7 @@ export default function Home() {
       model: variant.model,
       provider: variant.provider,
       toolActivity: variant.toolActivity,
+      generatedFiles: variant.generatedFiles,
       variantIndex: index,
     });
   }
@@ -1469,7 +2059,9 @@ export default function Home() {
   // new session and switch to it.
   function branchThread(messageId: string) {
     if (streaming || !activeThread) return;
-    const cut = activeThread.messages.findIndex((message) => message.id === messageId);
+    const cut = activeThread.messages.findIndex(
+      (message) => message.id === messageId,
+    );
     if (cut < 0) return;
     const now = Date.now();
     const branch: Thread = {
@@ -1516,11 +2108,16 @@ export default function Home() {
       if (streaming || !activeThread) return;
       patchMessage(activeThread.id, messageId, { planState: "approved" });
       setMode("build");
-      void submit("Implement the approved plan. Complete the work and verify it.", "build");
+      void submit(
+        "Implement the approved plan. Complete the work and verify it.",
+        "build",
+      );
     },
     revise: (messageId) => {
       if (streaming || !activeThread) return;
-      patchMessage(activeThread.id, messageId, { planState: "changes_requested" });
+      patchMessage(activeThread.id, messageId, {
+        planState: "changes_requested",
+      });
       setMode("plan");
       setDraft("Revise the plan: ");
       textareaRef.current?.focus();
@@ -1533,13 +2130,31 @@ export default function Home() {
   useEffect(() => {
     messageActionsRef.current = messageActions;
   });
-  const approvePlan = useCallback((messageId: string) => messageActionsRef.current.approve(messageId), []);
-  const revisePlan = useCallback((messageId: string) => messageActionsRef.current.revise(messageId), []);
-  const regenerateMessage = useCallback((messageId: string) => messageActionsRef.current.regenerate(messageId), []);
-  const branchMessage = useCallback((messageId: string) => messageActionsRef.current.branch(messageId), []);
-  const selectMessageVariant = useCallback(
-    (messageId: string, index: number) => messageActionsRef.current.selectVariant(messageId, index),
+  const approvePlan = useCallback(
+    (messageId: string) => messageActionsRef.current.approve(messageId),
     [],
+  );
+  const revisePlan = useCallback(
+    (messageId: string) => messageActionsRef.current.revise(messageId),
+    [],
+  );
+  const regenerateMessage = useCallback(
+    (messageId: string) => messageActionsRef.current.regenerate(messageId),
+    [],
+  );
+  const branchMessage = useCallback(
+    (messageId: string) => messageActionsRef.current.branch(messageId),
+    [],
+  );
+  const selectMessageVariant = useCallback(
+    (messageId: string, index: number) =>
+      messageActionsRef.current.selectVariant(messageId, index),
+    [],
+  );
+  const downloadMessageFile = useCallback(
+    (fileProvider: ProviderId, file: GeneratedFile) =>
+      downloadGeneratedFile(fileProvider, settings[fileProvider].apiKey, file),
+    [settings],
   );
 
   function onSubmit(event: FormEvent) {
@@ -1549,7 +2164,11 @@ export default function Home() {
 
   function onComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     // The isComposing guard keeps Enter from sending mid-IME-composition.
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing
+    ) {
       event.preventDefault();
       void submit();
     }
@@ -1576,44 +2195,94 @@ export default function Home() {
     textareaRef.current?.focus();
   }
 
-  const canSend = Boolean(draft.trim() && currentSettings.model.trim() && !streaming);
+  const canSend = Boolean(
+    draft.trim() && currentSettings.model.trim() && !streaming,
+  );
 
   return (
     <main className="app-shell" data-theme={theme}>
       <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
         <div className="brand-row">
-          <div className="brand-mark" aria-hidden="true"><span /><span /><span /></div>
-          <div><strong>smoketest</strong><small>coding assistant</small></div>
-          <button className="icon-button mobile-close" onClick={() => setSidebarOpen(false)} aria-label="Close navigation"><Icon name="close" /></button>
+          <div className="brand-mark" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div>
+            <strong>smoketest</strong>
+            <small>coding assistant</small>
+          </div>
+          <button
+            className="icon-button mobile-close"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close navigation"
+          >
+            <Icon name="close" />
+          </button>
         </div>
 
-        <button className="new-thread" onClick={createThread}><Icon name="plus" size={16} /> New session</button>
+        <button className="new-thread" onClick={createThread}>
+          <Icon name="plus" size={16} /> New session
+        </button>
 
-        <div className="sidebar-label"><span>SESSIONS</span><span>{threads.length}</span></div>
+        <div className="sidebar-label">
+          <span>SESSIONS</span>
+          <span>{threads.length}</span>
+        </div>
         <nav className="thread-list" aria-label="Sessions">
           {threads
             .slice()
             .sort((a, b) => b.updatedAt - a.updatedAt)
             .map((thread) => (
-              <div className={`thread-row ${thread.id === activeThread?.id ? "active" : ""}`} key={thread.id}>
-                <button onClick={() => { setActiveId(thread.id); setSidebarOpen(false); }}>
+              <div
+                className={`thread-row ${thread.id === activeThread?.id ? "active" : ""}`}
+                key={thread.id}
+              >
+                <button
+                  onClick={() => {
+                    setActiveId(thread.id);
+                    setSidebarOpen(false);
+                  }}
+                >
                   <span className="thread-dot" />
-                  <span className="thread-copy"><strong>{thread.title}</strong><small>{timeLabel(thread.updatedAt)}</small></span>
+                  <span className="thread-copy">
+                    <strong>{thread.title}</strong>
+                    <small>{timeLabel(thread.updatedAt)}</small>
+                  </span>
                 </button>
-                <button className="thread-delete" onClick={() => deleteThread(thread.id)} aria-label={`Delete ${thread.title}`}><Icon name="trash" size={14} /></button>
+                <button
+                  className="thread-delete"
+                  onClick={() => deleteThread(thread.id)}
+                  aria-label={`Delete ${thread.title}`}
+                >
+                  <Icon name="trash" size={14} />
+                </button>
               </div>
             ))}
         </nav>
 
         <div className="provider-stack">
-          <div className="sidebar-label"><span>PROVIDER</span><span className={`status-dot ${currentProvider.local ? "local" : "cloud"}`} /></div>
+          <div className="sidebar-label">
+            <span>PROVIDER</span>
+            <span
+              className={`status-dot ${currentProvider.local ? "local" : "cloud"}`}
+            />
+          </div>
           <div className="provider-grid">
             {PROVIDER_IDS.map((item) => (
               <button
                 key={item}
                 className={provider === item ? "selected" : ""}
-                style={{ "--provider": PROVIDERS[item].accent } as React.CSSProperties}
-                onClick={() => { setProvider(item); setModels([]); setModelStatus(""); }}
+                style={
+                  {
+                    "--provider": PROVIDERS[item].accent,
+                  } as React.CSSProperties
+                }
+                onClick={() => {
+                  setProvider(item);
+                  setModels([]);
+                  setModelStatus("");
+                }}
                 title={PROVIDERS[item].name}
               >
                 <span>{PROVIDERS[item].shortName}</span>
@@ -1621,38 +2290,83 @@ export default function Home() {
               </button>
             ))}
           </div>
-          <button className="settings-button" onClick={() => setSettingsOpen(true)}>
+          <button
+            className="settings-button"
+            onClick={() => setSettingsOpen(true)}
+          >
             <Icon name="settings" size={16} /> Provider settings
-            <span className={currentSettings.model ? "configured" : "needs-config"}>{currentSettings.model ? "Ready" : "Set up"}</span>
+            <span
+              className={currentSettings.model ? "configured" : "needs-config"}
+            >
+              {currentSettings.model ? "Ready" : "Set up"}
+            </span>
           </button>
         </div>
       </aside>
 
-      {sidebarOpen && <button className="sidebar-scrim" onClick={() => setSidebarOpen(false)} aria-label="Close navigation" />}
+      {sidebarOpen && (
+        <button
+          className="sidebar-scrim"
+          onClick={() => setSidebarOpen(false)}
+          aria-label="Close navigation"
+        />
+      )}
 
       <section className="workspace">
         <header className="topbar">
-          <button className="icon-button mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="Open navigation"><Icon name="menu" /></button>
+          <button
+            className="icon-button mobile-menu"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open navigation"
+          >
+            <Icon name="menu" />
+          </button>
           <div className="session-heading">
             <span className="topbar-kicker">SESSION</span>
             <strong>{activeThread?.title ?? "Loading…"}</strong>
           </div>
           <div className="mode-switch" aria-label="Assistant mode">
             {(Object.keys(MODE_COPY) as Mode[]).map((item) => (
-              <button key={item} className={mode === item ? "active" : ""} onClick={() => setMode(item)}>
-                <span>{MODE_COPY[item].mark}</span>{MODE_COPY[item].label}
+              <button
+                key={item}
+                className={mode === item ? "active" : ""}
+                onClick={() => setMode(item)}
+              >
+                <span>{MODE_COPY[item].mark}</span>
+                {MODE_COPY[item].label}
               </button>
             ))}
           </div>
           <div className="theme-switch" aria-label="Color theme">
-            <button className={theme === "smoke" ? "active" : ""} onClick={() => setTheme("smoke")} title="Smoke light theme"><span>○</span> Smoke</button>
-            <button className={theme === "ember" ? "active" : ""} onClick={() => setTheme("ember")} title="Ember dark theme"><span>●</span> Ember</button>
+            <button
+              className={theme === "smoke" ? "active" : ""}
+              onClick={() => setTheme("smoke")}
+              title="Smoke light theme"
+            >
+              <span>○</span> Smoke
+            </button>
+            <button
+              className={theme === "ember" ? "active" : ""}
+              onClick={() => setTheme("ember")}
+              title="Ember dark theme"
+            >
+              <span>●</span> Ember
+            </button>
           </div>
           <div className="topbar-right">
             <ExportMenu thread={activeThread} />
-            <button className="model-pill" onClick={() => setSettingsOpen(true)} style={{ "--provider": currentProvider.accent } as React.CSSProperties}>
+            <button
+              className="model-pill"
+              onClick={() => setSettingsOpen(true)}
+              style={
+                { "--provider": currentProvider.accent } as React.CSSProperties
+              }
+            >
               <span>{currentProvider.shortName}</span>
-              <span className="model-pill-copy"><strong>{currentProvider.name}</strong><small>{currentSettings.model || "Choose model"}</small></span>
+              <span className="model-pill-copy">
+                <strong>{currentProvider.name}</strong>
+                <small>{currentSettings.model || "Choose model"}</small>
+              </span>
               <span className="chevron">⌄</span>
             </button>
           </div>
@@ -1661,18 +2375,46 @@ export default function Home() {
         <div className="conversation">
           {!activeThread?.messages.length ? (
             <div className="empty-state">
-              <div className="smoke-orbit" aria-hidden="true"><i /><i /><i /></div>
-              <p className="overline">RESPONSES API · FOUR PROVIDERS · ONE WORKSPACE</p>
-              <h1>Make the change.<br /><em>Keep the signal.</em></h1>
-              <p className="empty-copy">Attach code, choose how you want to work, and route the same focused session through OpenAI, xAI, LM Studio, or Ollama.</p>
+              <div className="smoke-orbit" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </div>
+              <p className="overline">
+                RESPONSES API · FOUR PROVIDERS · ONE WORKSPACE
+              </p>
+              <h1>
+                Make the change.
+                <br />
+                <em>Keep the signal.</em>
+              </h1>
+              <p className="empty-copy">
+                Attach code, choose how you want to work, and route the same
+                focused session through OpenAI, xAI, LM Studio, or Ollama.
+              </p>
               <div className="starter-grid">
                 {STARTERS.map((starter) => (
-                  <button key={starter.eyebrow} onClick={() => { setDraft(starter.text); textareaRef.current?.focus(); }}>
-                    <span>{starter.eyebrow}</span><p>{starter.text}</p><b>↗</b>
+                  <button
+                    key={starter.eyebrow}
+                    onClick={() => {
+                      setDraft(starter.text);
+                      textareaRef.current?.focus();
+                    }}
+                  >
+                    <span>{starter.eyebrow}</span>
+                    <p>{starter.text}</p>
+                    <b>↗</b>
                   </button>
                 ))}
               </div>
-              <div className="empty-foot"><span /><p><b>{MODE_COPY[mode].label} mode</b> · {MODE_COPY[mode].description}</p><span /></div>
+              <div className="empty-foot">
+                <span />
+                <p>
+                  <b>{MODE_COPY[mode].label} mode</b> ·{" "}
+                  {MODE_COPY[mode].description}
+                </p>
+                <span />
+              </div>
             </div>
           ) : (
             <div className="message-list">
@@ -1688,6 +2430,7 @@ export default function Home() {
                   onRegenerate={regenerateMessage}
                   onBranch={branchMessage}
                   onSelectVariant={selectMessageVariant}
+                  onDownloadGeneratedFile={downloadMessageFile}
                 />
               ))}
               <div ref={messagesEndRef} />
@@ -1701,17 +2444,24 @@ export default function Home() {
             onSubmit={onSubmit}
             onDragOver={(event) => {
               event.preventDefault();
-              if (event.dataTransfer?.types.includes("Files")) setDragOver(true);
+              if (event.dataTransfer?.types.includes("Files"))
+                setDragOver(true);
             }}
             onDragLeave={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(false);
+              if (!event.currentTarget.contains(event.relatedTarget as Node))
+                setDragOver(false);
             }}
             onDrop={(event) => void onComposerDrop(event)}
           >
             {commandMatches.length > 0 && (
               <div className="command-menu" role="menu" aria-label="Commands">
                 {commandMatches.map((item) => (
-                  <button key={item.command} type="button" role="menuitem" onClick={() => pickCommand(item.command)}>
+                  <button
+                    key={item.command}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => pickCommand(item.command)}
+                  >
                     <code>{item.command}</code>
                     <span>{item.hint}</span>
                   </button>
@@ -1722,13 +2472,20 @@ export default function Home() {
               <div className="composer-files">
                 {groupAttachments(attachments).map((group) => {
                   const ids = new Set(group.ids);
-                  const label = group.ids.length > 1 ? `${group.label} · ${group.ids.length} files` : group.label;
+                  const label =
+                    group.ids.length > 1
+                      ? `${group.label} · ${group.ids.length} files`
+                      : group.label;
                   return (
                     <span key={group.key} title={label}>
                       @{label}
                       <button
                         type="button"
-                        onClick={() => setAttachments((current) => current.filter((item) => !ids.has(item.id)))}
+                        onClick={() =>
+                          setAttachments((current) =>
+                            current.filter((item) => !ids.has(item.id)),
+                          )
+                        }
                         aria-label={`Remove ${group.label}`}
                       >
                         <Icon name="close" size={12} />
@@ -1749,11 +2506,19 @@ export default function Home() {
             />
             <div className="composer-footer">
               <span className="composer-hint">
-                {(ragStatus?.threadId === activeThread?.id && ragStatus?.text) ||
-                  (attachNote?.threadId === activeThread?.id && attachNote?.text) ||
+                {(ragStatus?.threadId === activeThread?.id &&
+                  ragStatus?.text) ||
+                  (attachNote?.threadId === activeThread?.id &&
+                    attachNote?.text) ||
                   `${MODE_COPY[mode].label} mode · ${MODE_COPY[mode].description}`}
               </span>
-              <input ref={fileRef} type="file" multiple hidden onChange={(event) => void onFiles(event)} />
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(event) => void onFiles(event)}
+              />
               <input
                 ref={dirRef}
                 type="file"
@@ -1777,153 +2542,471 @@ export default function Home() {
                 </button>
                 {attachMenuOpen && (
                   <div className="attach-panel" role="menu">
-                    <button type="button" role="menuitem" onClick={() => { setAttachMenuOpen(false); fileRef.current?.click(); }}>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setAttachMenuOpen(false);
+                        fileRef.current?.click();
+                      }}
+                    >
                       <Icon name="paperclip" size={14} /> Files…
                     </button>
-                    <button type="button" role="menuitem" onClick={() => { setAttachMenuOpen(false); dirRef.current?.click(); }}>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setAttachMenuOpen(false);
+                        dirRef.current?.click();
+                      }}
+                    >
                       <Icon name="folder" size={14} /> Folder…
                     </button>
                   </div>
                 )}
               </div>
               {streaming ? (
-                <button type="button" className="composer-send is-stop" onClick={() => abortRef.current?.abort()} title="Stop generating" aria-label="Stop generating">
+                <button
+                  type="button"
+                  className="composer-send is-stop"
+                  onClick={() => abortRef.current?.abort()}
+                  title="Stop generating"
+                  aria-label="Stop generating"
+                >
                   <Icon name="stop" size={16} />
                 </button>
               ) : (
-                <button className="composer-send" disabled={!canSend} title="Send" aria-label="Send">
+                <button
+                  className="composer-send"
+                  disabled={!canSend}
+                  title="Send"
+                  aria-label="Send"
+                >
                   <Icon name="send" size={17} />
                 </button>
               )}
             </div>
           </form>
           <p className="composer-foot">
-            Commands: {COMMANDS.map((item) => item.command).join(" · ")} — drop files or folders on the composer. Keys and sessions stay in this browser.
+            Commands: {COMMANDS.map((item) => item.command).join(" · ")} — drop
+            files or folders on the composer. Keys and sessions stay in this
+            browser.
           </p>
         </div>
       </section>
 
       {settingsOpen && (
-        <div className="dialog-layer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
-          <section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div
+          className="dialog-layer"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setSettingsOpen(false);
+          }}
+        >
+          <section
+            className="settings-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-title"
+          >
             <div className="settings-head">
-              <div><span className="overline">CONNECTION</span><h2 id="settings-title">Provider settings</h2></div>
-              <button className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close settings"><Icon name="close" /></button>
+              <div>
+                <span className="overline">CONNECTION</span>
+                <h2 id="settings-title">Provider settings</h2>
+              </div>
+              <button
+                className="icon-button"
+                onClick={() => setSettingsOpen(false)}
+                aria-label="Close settings"
+              >
+                <Icon name="close" />
+              </button>
             </div>
             <div className="settings-providers">
               {PROVIDER_IDS.map((item) => (
-                <button key={item} className={provider === item ? "active" : ""} onClick={() => { setProvider(item); setModels([]); setModelStatus(""); }} style={{ "--provider": PROVIDERS[item].accent } as React.CSSProperties}>
-                  <span>{PROVIDERS[item].shortName}</span><div><strong>{PROVIDERS[item].name}</strong><small>{PROVIDERS[item].hint}</small></div>
+                <button
+                  key={item}
+                  className={provider === item ? "active" : ""}
+                  onClick={() => {
+                    setProvider(item);
+                    setModels([]);
+                    setModelStatus("");
+                  }}
+                  style={
+                    {
+                      "--provider": PROVIDERS[item].accent,
+                    } as React.CSSProperties
+                  }
+                >
+                  <span>{PROVIDERS[item].shortName}</span>
+                  <div>
+                    <strong>{PROVIDERS[item].name}</strong>
+                    <small>{PROVIDERS[item].hint}</small>
+                  </div>
                 </button>
               ))}
             </div>
             <div className="settings-form">
-              <label>Responses API base URL<input value={currentProvider.baseUrl} readOnly /><small>Fixed preset for safer request routing.</small></label>
               <label>
-                API key {currentProvider.apiKeyRequired ? <b>required</b> : <em>optional</em>}
-                <input type="password" autoComplete="off" value={currentSettings.apiKey} onChange={(event) => updateProviderSettings({ apiKey: event.target.value })} placeholder={currentProvider.apiKeyRequired ? "Paste a provider key" : "Leave blank for local server"} />
+                Responses API base URL
+                <input value={currentProvider.baseUrl} readOnly />
+                <small>Fixed preset for safer request routing.</small>
+              </label>
+              <label>
+                API key{" "}
+                {currentProvider.apiKeyRequired ? (
+                  <b>required</b>
+                ) : (
+                  <em>optional</em>
+                )}
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={currentSettings.apiKey}
+                  onChange={(event) =>
+                    updateProviderSettings({ apiKey: event.target.value })
+                  }
+                  placeholder={
+                    currentProvider.apiKeyRequired
+                      ? "Paste a provider key"
+                      : "Leave blank for local server"
+                  }
+                />
                 <small>Stored only in this browser&apos;s local storage.</small>
               </label>
               <label>
                 Model
                 {models.length ? (
-                  <select value={currentSettings.model} onChange={(event) => updateProviderSettings({ model: event.target.value })}>
-                    {!currentSettings.model && <option value="" disabled>Choose a model…</option>}
-                    {currentSettings.model && !models.includes(currentSettings.model) && (
-                      <option value={currentSettings.model}>{currentSettings.model} (not on server)</option>
+                  <select
+                    value={currentSettings.model}
+                    onChange={(event) =>
+                      updateProviderSettings({ model: event.target.value })
+                    }
+                  >
+                    {!currentSettings.model && (
+                      <option value="" disabled>
+                        Choose a model…
+                      </option>
                     )}
-                    {models.map((model) => <option key={model} value={model}>{model}</option>)}
+                    {currentSettings.model &&
+                      !models.includes(currentSettings.model) && (
+                        <option value={currentSettings.model}>
+                          {currentSettings.model} (not on server)
+                        </option>
+                      )}
+                    {models.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
                   </select>
                 ) : (
-                  <input value={currentSettings.model} onChange={(event) => updateProviderSettings({ model: event.target.value })} placeholder="Model identifier" />
+                  <input
+                    value={currentSettings.model}
+                    onChange={(event) =>
+                      updateProviderSettings({ model: event.target.value })
+                    }
+                    placeholder="Model identifier"
+                  />
                 )}
-                <small>{models.length ? "Loaded from the provider's /v1/models." : "Type a model id, or connect to load the list."}</small>
+                <small>
+                  {models.length
+                    ? "Loaded from the provider's /v1/models."
+                    : "Type a model id, or connect to load the list."}
+                </small>
               </label>
               <label>
                 Reasoning effort
-                <select value={reasoning} onChange={(event) => setReasoning(event.target.value)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
-                <small>Sent as the standard Responses API reasoning parameter.</small>
+                <select
+                  value={reasoning}
+                  onChange={(event) => setReasoning(event.target.value)}
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+                <small>
+                  Sent as the standard Responses API reasoning parameter.
+                </small>
               </label>
             </div>
+            {provider === "openai" && (
+              <div className="tools-section">
+                <span className="overline">OPENAI PROCESSING</span>
+                <div className="tools-grid">
+                  <label className="tool-toggle priority-toggle">
+                    <input
+                      type="checkbox"
+                      checked={currentSettings.priorityProcessing}
+                      onChange={(event) =>
+                        updateProviderSettings({
+                          priorityProcessing: event.target.checked,
+                        })
+                      }
+                    />
+                    <span>
+                      <strong>Fast mode</strong>
+                      <small>
+                        Use Priority processing for faster, more consistent
+                        responses. Enterprise access and premium pricing
+                        required.
+                      </small>
+                    </span>
+                  </label>
+                </div>
+              </div>
+            )}
             <div className="tools-section">
               <span className="overline">PROVIDER TOOLS</span>
-              {TOOL_SUPPORT[provider].webSearch || TOOL_SUPPORT[provider].mcp ? (
+              {TOOL_SUPPORT[provider].webSearch ||
+              TOOL_SUPPORT[provider].mcp ? (
                 <>
                   <div className="tools-grid">
                     {TOOL_SUPPORT[provider].webSearch && (
                       <label className="tool-toggle">
-                        <input type="checkbox" checked={currentSettings.webSearch} onChange={(event) => updateProviderSettings({ webSearch: event.target.checked })} />
-                        <span><strong>Web search</strong><small>Provider-managed searches for fresh information</small></span>
+                        <input
+                          type="checkbox"
+                          checked={currentSettings.webSearch}
+                          onChange={(event) =>
+                            updateProviderSettings({
+                              webSearch: event.target.checked,
+                            })
+                          }
+                        />
+                        <span>
+                          <strong>Web search</strong>
+                          <small>
+                            Provider-managed searches for fresh information
+                          </small>
+                        </span>
                       </label>
                     )}
                     {TOOL_SUPPORT[provider].xSearch && (
                       <label className="tool-toggle">
-                        <input type="checkbox" checked={currentSettings.xSearch} onChange={(event) => updateProviderSettings({ xSearch: event.target.checked })} />
-                        <span><strong>X search</strong><small>Search X posts through Grok</small></span>
+                        <input
+                          type="checkbox"
+                          checked={currentSettings.xSearch}
+                          onChange={(event) =>
+                            updateProviderSettings({
+                              xSearch: event.target.checked,
+                            })
+                          }
+                        />
+                        <span>
+                          <strong>X search</strong>
+                          <small>Search X posts through Grok</small>
+                        </span>
                       </label>
                     )}
                     {TOOL_SUPPORT[provider].codeInterpreter && (
                       <label className="tool-toggle">
-                        <input type="checkbox" checked={currentSettings.codeInterpreter} onChange={(event) => updateProviderSettings({ codeInterpreter: event.target.checked })} />
-                        <span><strong>Code interpreter</strong><small>Run Python in the provider sandbox</small></span>
+                        <input
+                          type="checkbox"
+                          checked={currentSettings.codeInterpreter}
+                          onChange={(event) =>
+                            updateProviderSettings({
+                              codeInterpreter: event.target.checked,
+                            })
+                          }
+                        />
+                        <span>
+                          <strong>Code interpreter</strong>
+                          <small>Run Python in the provider sandbox</small>
+                        </span>
                       </label>
                     )}
                     {TOOL_SUPPORT[provider].fileSearch && (
                       <label className="tool-toggle">
-                        <input type="checkbox" checked={currentSettings.fileSearch} onChange={(event) => updateProviderSettings({ fileSearch: event.target.checked })} />
-                        <span><strong>File search</strong><small>Search vector stores by ID</small></span>
+                        <input
+                          type="checkbox"
+                          checked={currentSettings.fileSearch}
+                          onChange={(event) =>
+                            updateProviderSettings({
+                              fileSearch: event.target.checked,
+                            })
+                          }
+                        />
+                        <span>
+                          <strong>File search</strong>
+                          <small>Search vector stores by ID</small>
+                        </span>
                       </label>
                     )}
                   </div>
-                  {TOOL_SUPPORT[provider].fileSearch && currentSettings.fileSearch && (
-                    <label className="tools-field">
-                      Vector store IDs
-                      <input value={currentSettings.vectorStoreId} onChange={(event) => updateProviderSettings({ vectorStoreId: event.target.value })} placeholder="vs_… (comma-separated)" />
-                    </label>
-                  )}
+                  {TOOL_SUPPORT[provider].fileSearch &&
+                    currentSettings.fileSearch && (
+                      <label className="tools-field">
+                        Vector store IDs
+                        <input
+                          value={currentSettings.vectorStoreId}
+                          onChange={(event) =>
+                            updateProviderSettings({
+                              vectorStoreId: event.target.value,
+                            })
+                          }
+                          placeholder="vs_… (comma-separated)"
+                        />
+                      </label>
+                    )}
                   <div className="mcp-block">
                     <span className="overline">MCP SERVERS</span>
                     {mcpServers.map((server) => (
                       <div className="mcp-row" key={server.id}>
                         <label>
-                          <input type="checkbox" checked={server.enabled} onChange={(event) => setMcpServers((current) => current.map((item) => item.id === server.id ? { ...item, enabled: event.target.checked } : item))} />
-                          <span><strong>{server.label}</strong><small>{server.url}</small></span>
+                          <input
+                            type="checkbox"
+                            checked={server.enabled}
+                            onChange={(event) =>
+                              setMcpServers((current) =>
+                                current.map((item) =>
+                                  item.id === server.id
+                                    ? { ...item, enabled: event.target.checked }
+                                    : item,
+                                ),
+                              )
+                            }
+                          />
+                          <span>
+                            <strong>{server.label}</strong>
+                            <small>{server.url}</small>
+                          </span>
                         </label>
-                        <button className="icon-button" onClick={() => setMcpServers((current) => current.filter((item) => item.id !== server.id))} aria-label={`Remove ${server.label}`}><Icon name="trash" size={13} /></button>
+                        <button
+                          className="icon-button"
+                          onClick={() =>
+                            setMcpServers((current) =>
+                              current.filter((item) => item.id !== server.id),
+                            )
+                          }
+                          aria-label={`Remove ${server.label}`}
+                        >
+                          <Icon name="trash" size={13} />
+                        </button>
                       </div>
                     ))}
                     <div className="mcp-add">
-                      <input value={mcpDraft.label} onChange={(event) => setMcpDraft((current) => ({ ...current, label: event.target.value }))} placeholder="label" aria-label="MCP server label" />
-                      <input value={mcpDraft.url} onChange={(event) => setMcpDraft((current) => ({ ...current, url: event.target.value }))} placeholder="https://host/mcp" aria-label="MCP server URL" />
-                      <button onClick={addMcpServer} disabled={!MCP_LABEL_PATTERN.test(mcpDraft.label.trim()) || !isValidMcpUrl(mcpDraft.url.trim())}>Add</button>
+                      <input
+                        value={mcpDraft.label}
+                        onChange={(event) =>
+                          setMcpDraft((current) => ({
+                            ...current,
+                            label: event.target.value,
+                          }))
+                        }
+                        placeholder="label"
+                        aria-label="MCP server label"
+                      />
+                      <input
+                        value={mcpDraft.url}
+                        onChange={(event) =>
+                          setMcpDraft((current) => ({
+                            ...current,
+                            url: event.target.value,
+                          }))
+                        }
+                        placeholder="https://host/mcp"
+                        aria-label="MCP server URL"
+                      />
+                      <button
+                        onClick={addMcpServer}
+                        disabled={
+                          !MCP_LABEL_PATTERN.test(mcpDraft.label.trim()) ||
+                          !isValidMcpUrl(mcpDraft.url.trim())
+                        }
+                      >
+                        Add
+                      </button>
                     </div>
-                    <small className="mcp-note">Remote servers run provider-side with approval set to “never” — only add servers you trust.</small>
+                    <small className="mcp-note">
+                      Remote servers run provider-side with approval set to
+                      “never” — only add servers you trust.
+                    </small>
                   </div>
                 </>
               ) : (
                 <>
                   <div className="tools-grid">
                     <label className="tool-toggle">
-                      <input type="checkbox" checked={currentSettings.localRag} onChange={(event) => updateProviderSettings({ localRag: event.target.checked })} />
-                      <span><strong>Local RAG</strong><small>Chunk and embed attached files via {currentProvider.name}&apos;s /v1/embeddings; send only the passages relevant to each question</small></span>
+                      <input
+                        type="checkbox"
+                        checked={currentSettings.localRag}
+                        onChange={(event) =>
+                          updateProviderSettings({
+                            localRag: event.target.checked,
+                          })
+                        }
+                      />
+                      <span>
+                        <strong>Local RAG</strong>
+                        <small>
+                          Chunk and embed attached files via{" "}
+                          {currentProvider.name}&apos;s /v1/embeddings; send
+                          only the passages relevant to each question
+                        </small>
+                      </span>
                     </label>
                   </div>
                   {currentSettings.localRag && (
                     <label className="tools-field">
                       Embedding model
-                      <input value={currentSettings.embeddingModel} onChange={(event) => updateProviderSettings({ embeddingModel: event.target.value })} placeholder="auto (nomic, mxbai, bge…)" />
+                      <input
+                        value={currentSettings.embeddingModel}
+                        onChange={(event) =>
+                          updateProviderSettings({
+                            embeddingModel: event.target.value,
+                          })
+                        }
+                        placeholder="auto (nomic, mxbai, bge…)"
+                      />
                     </label>
                   )}
-                  <p className="tools-empty">Server-side tools are not available for local providers; retrieval runs in this browser instead. Blank embedding model auto-picks from the server&apos;s model list.</p>
+                  <p className="tools-empty">
+                    Server-side tools are not available for local providers;
+                    retrieval runs in this browser instead. Blank embedding
+                    model auto-picks from the server&apos;s model list.
+                  </p>
                 </>
               )}
             </div>
             <div className="connection-row">
-              <button className="test-button" onClick={() => setModelsRefresh((count) => count + 1)}><Icon name="refresh" size={15} /> Refresh models</button>
-              <p className={modelStatus.toLowerCase().includes("could not") || modelStatus.toLowerCase().includes("failed") || modelStatus.toLowerCase().includes("requires") ? "bad" : ""}>{modelStatus}</p>
+              <button
+                className="test-button"
+                onClick={() => setModelsRefresh((count) => count + 1)}
+              >
+                <Icon name="refresh" size={15} /> Refresh models
+              </button>
+              <p
+                className={
+                  modelStatus.toLowerCase().includes("could not") ||
+                  modelStatus.toLowerCase().includes("failed") ||
+                  modelStatus.toLowerCase().includes("requires")
+                    ? "bad"
+                    : ""
+                }
+              >
+                {modelStatus}
+              </p>
             </div>
-            <div className="settings-note"><span>i</span><p><strong>Responses API only.</strong> smoketest sends the same <code>/v1/responses</code> request shape to every provider. Chat Completions and provider-specific SDKs are intentionally excluded.</p></div>
-            <button className="save-settings" onClick={() => setSettingsOpen(false)} disabled={!currentSettings.model.trim() || (currentProvider.apiKeyRequired && !currentSettings.apiKey.trim())}>Use {currentProvider.name}</button>
+            <div className="settings-note">
+              <span>i</span>
+              <p>
+                <strong>Responses API only.</strong> smoketest sends the same{" "}
+                <code>/v1/responses</code> request shape to every provider. Chat
+                Completions and provider-specific SDKs are intentionally
+                excluded.
+              </p>
+            </div>
+            <button
+              className="save-settings"
+              onClick={() => setSettingsOpen(false)}
+              disabled={
+                !currentSettings.model.trim() ||
+                (currentProvider.apiKeyRequired &&
+                  !currentSettings.apiKey.trim())
+              }
+            >
+              Use {currentProvider.name}
+            </button>
           </section>
         </div>
       )}

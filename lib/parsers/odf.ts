@@ -27,7 +27,10 @@ function walk(node: Node): string {
     } else if (local === "s") {
       out += " ";
     } else if (local === "table-cell") {
-      out += walk(child).replace(/\s*\n\s*/g, " ").trim() + "\t";
+      out +=
+        walk(child)
+          .replace(/\s*\n\s*/g, " ")
+          .trim() + "\t";
     } else {
       out += walk(child);
       if (local === "p" || local === "h" || local === "table-row") {
@@ -46,7 +49,9 @@ function walk(node: Node): string {
  * @param arrayBuffer - The raw ODF bytes.
  * @throws If `content.xml` is missing or no text is found.
  */
-export async function extractOdfText(arrayBuffer: ArrayBuffer): Promise<string> {
+export async function extractOdfText(
+  arrayBuffer: ArrayBuffer,
+): Promise<string> {
   const zip = readZip(arrayBuffer);
 
   const contentFile = zip.file("content.xml");
@@ -56,9 +61,12 @@ export async function extractOdfText(arrayBuffer: ArrayBuffer): Promise<string> 
   const dom = new DOMParser().parseFromString(xml, "application/xml");
 
   const body =
-    dom.getElementsByTagNameNS("urn:oasis:names:tc:opendocument:xmlns:office:1.0", "body")[0] ||
-    dom.documentElement;
-  if (!body) throw new Error("office:body element not found in ODF content.xml");
+    dom.getElementsByTagNameNS(
+      "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
+      "body",
+    )[0] || dom.documentElement;
+  if (!body)
+    throw new Error("office:body element not found in ODF content.xml");
 
   const text = walk(body)
     .replace(/[ \t]+\n/g, "\n")

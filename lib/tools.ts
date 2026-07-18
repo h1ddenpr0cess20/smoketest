@@ -6,12 +6,42 @@ import type { ProviderId } from "./providers";
 // Local servers run no server-side tools.
 export const TOOL_SUPPORT: Record<
   ProviderId,
-  { webSearch: boolean; xSearch: boolean; codeInterpreter: boolean; fileSearch: boolean; mcp: boolean }
+  {
+    webSearch: boolean;
+    xSearch: boolean;
+    codeInterpreter: boolean;
+    fileSearch: boolean;
+    mcp: boolean;
+  }
 > = {
-  openai: { webSearch: true, xSearch: false, codeInterpreter: true, fileSearch: true, mcp: true },
-  xai: { webSearch: true, xSearch: true, codeInterpreter: true, fileSearch: true, mcp: true },
-  lmstudio: { webSearch: false, xSearch: false, codeInterpreter: false, fileSearch: false, mcp: false },
-  ollama: { webSearch: false, xSearch: false, codeInterpreter: false, fileSearch: false, mcp: false },
+  openai: {
+    webSearch: true,
+    xSearch: false,
+    codeInterpreter: true,
+    fileSearch: true,
+    mcp: true,
+  },
+  xai: {
+    webSearch: true,
+    xSearch: true,
+    codeInterpreter: true,
+    fileSearch: true,
+    mcp: true,
+  },
+  lmstudio: {
+    webSearch: false,
+    xSearch: false,
+    codeInterpreter: false,
+    fileSearch: false,
+    mcp: false,
+  },
+  ollama: {
+    webSearch: false,
+    xSearch: false,
+    codeInterpreter: false,
+    fileSearch: false,
+    mcp: false,
+  },
 };
 
 export type ToolRequest = {
@@ -38,21 +68,37 @@ export function isValidMcpUrl(value: string) {
 // anything the provider does not support. Tool shapes follow wordmark's
 // staticTools definitions. MCP approval is "never" because smoketest has no
 // approval round-trip UI.
-export function buildTools(provider: ProviderId, request: ToolRequest): Record<string, unknown>[] {
+export function buildTools(
+  provider: ProviderId,
+  request: ToolRequest,
+): Record<string, unknown>[] {
   const support = TOOL_SUPPORT[provider];
   const tools: Record<string, unknown>[] = [];
-  if (support.webSearch && request.webSearch) tools.push({ type: "web_search" });
+  if (support.webSearch && request.webSearch)
+    tools.push({ type: "web_search" });
   if (support.xSearch && request.xSearch) tools.push({ type: "x_search" });
   if (support.codeInterpreter && request.codeInterpreter) {
-    tools.push({ type: "code_interpreter", container: { type: "auto", file_ids: [] } });
+    // xAI manages code-execution containers implicitly and rejects OpenAI's
+    // expanded auto-container configuration as a non-auto container.
+    tools.push(
+      provider === "xai"
+        ? { type: "code_interpreter" }
+        : {
+            type: "code_interpreter",
+            container: { type: "auto", file_ids: [] },
+          },
+    );
   }
-  const vectorStoreIds = (request.vectorStoreIds ?? []).map((id) => id.trim()).filter(Boolean);
+  const vectorStoreIds = (request.vectorStoreIds ?? [])
+    .map((id) => id.trim())
+    .filter(Boolean);
   if (support.fileSearch && request.fileSearch && vectorStoreIds.length) {
     tools.push({ type: "file_search", vector_store_ids: vectorStoreIds });
   }
   if (support.mcp) {
     for (const server of request.mcpServers ?? []) {
-      if (!MCP_LABEL_PATTERN.test(server.label) || !isValidMcpUrl(server.url)) continue;
+      if (!MCP_LABEL_PATTERN.test(server.label) || !isValidMcpUrl(server.url))
+        continue;
       tools.push({
         type: "mcp",
         server_label: server.label,

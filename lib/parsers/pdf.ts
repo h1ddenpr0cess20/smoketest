@@ -31,7 +31,9 @@ function isNonTextStream(dictText: string): boolean {
  * @param arrayBuffer - The raw PDF bytes.
  * @returns The extracted text (empty string for image-only PDFs).
  */
-export async function extractPdfText(arrayBuffer: ArrayBuffer): Promise<string> {
+export async function extractPdfText(
+  arrayBuffer: ArrayBuffer,
+): Promise<string> {
   const bytes = new Uint8Array(arrayBuffer);
   const text = new TextDecoder("latin1").decode(bytes);
 
@@ -49,7 +51,8 @@ export async function extractPdfText(arrayBuffer: ArrayBuffer): Promise<string> 
     if (isNonTextStream(dictText)) continue;
 
     const isFlate = dictText.includes("/FlateDecode");
-    const isAscii85 = dictText.includes("/ASCII85Decode") || dictText.includes("/A85");
+    const isAscii85 =
+      dictText.includes("/ASCII85Decode") || dictText.includes("/A85");
     let streamBytes = bytes.slice(streamStart, endIdx);
 
     let decoded: string;
@@ -75,7 +78,11 @@ function ascii85Decode(data: Uint8Array): Uint8Array<ArrayBuffer> {
   let started = false;
   for (let i = 0; i < data.length; i++) {
     const c = data[i];
-    if (!started && c === 0x3c && data[i + 1] === 0x7e) { i++; started = true; continue; }
+    if (!started && c === 0x3c && data[i + 1] === 0x7e) {
+      i++;
+      started = true;
+      continue;
+    }
     if (c === 0x7e) break;
     if (c <= 0x20) continue;
     if (c === 0x7a && tuple.length === 0) {
@@ -87,7 +94,12 @@ function ascii85Decode(data: Uint8Array): Uint8Array<ArrayBuffer> {
     if (tuple.length === 5) {
       let value = 0;
       for (const t of tuple) value = value * 85 + t;
-      out.push((value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff);
+      out.push(
+        (value >>> 24) & 0xff,
+        (value >>> 16) & 0xff,
+        (value >>> 8) & 0xff,
+        value & 0xff,
+      );
       tuple.length = 0;
     }
   }
@@ -96,7 +108,12 @@ function ascii85Decode(data: Uint8Array): Uint8Array<ArrayBuffer> {
     while (tuple.length < 5) tuple.push(84);
     let value = 0;
     for (const t of tuple) value = value * 85 + t;
-    const bytes = [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
+    const bytes = [
+      (value >>> 24) & 0xff,
+      (value >>> 16) & 0xff,
+      (value >>> 8) & 0xff,
+      value & 0xff,
+    ];
     for (let k = 0; k < n - 1; k++) out.push(bytes[k]);
   }
   return new Uint8Array(out);
@@ -111,7 +128,10 @@ async function decompressFlate(data: Uint8Array<ArrayBuffer>): Promise<string> {
       const writer = ds.writable.getWriter();
       const reader = ds.readable.getReader();
 
-      const writeDone = writer.write(data).then(() => writer.close()).catch(() => {});
+      const writeDone = writer
+        .write(data)
+        .then(() => writer.close())
+        .catch(() => {});
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -163,17 +183,26 @@ function parseTJInner(inner: string): TJPart[] {
     if (ch === "(") {
       let j = i + 1;
       while (j < inner.length) {
-        if (inner[j] === "\\") { j += 2; continue; }
+        if (inner[j] === "\\") {
+          j += 2;
+          continue;
+        }
         if (inner[j] === ")") break;
         j++;
       }
-      parts.push({ str: decodePdfString(inner.slice(i + 1, j)), kernBefore: lastKern });
+      parts.push({
+        str: decodePdfString(inner.slice(i + 1, j)),
+        kernBefore: lastKern,
+      });
       lastKern = 0;
       i = j + 1;
     } else if (ch === "<") {
       const end = inner.indexOf(">", i + 1);
       if (end === -1) break;
-      parts.push({ str: decodePdfHexString(inner.slice(i + 1, end)), kernBefore: lastKern });
+      parts.push({
+        str: decodePdfHexString(inner.slice(i + 1, end)),
+        kernBefore: lastKern,
+      });
       lastKern = 0;
       i = end + 1;
     } else {
@@ -201,10 +230,16 @@ function extractTextFromStream(content: string): string {
     const tok = m[0];
 
     if (tok === "BT" || tok === "ET" || tok === "T*") {
-      if (current.trim()) { lines.push(current.trim()); current = ""; }
+      if (current.trim()) {
+        lines.push(current.trim());
+        current = "";
+      }
     } else if (m[1] !== undefined) {
       const y = parseFloat(m[2]);
-      if (Math.abs(y) > 1 && current.trim()) { lines.push(current.trim()); current = ""; }
+      if (Math.abs(y) > 1 && current.trim()) {
+        lines.push(current.trim());
+        current = "";
+      }
     } else if (m[3] !== undefined) {
       for (const { str, kernBefore } of parseTJInner(m[3])) {
         if (kernBefore < -100) current += " ";
@@ -212,15 +247,20 @@ function extractTextFromStream(content: string): string {
       }
     } else if (m[4] !== undefined) {
       const raw = m[4];
-      current += raw[0] === "<"
-        ? decodePdfHexString(raw.slice(1, raw.lastIndexOf(">")))
-        : decodePdfString(raw.slice(1, raw.lastIndexOf(")")));
+      current +=
+        raw[0] === "<"
+          ? decodePdfHexString(raw.slice(1, raw.lastIndexOf(">")))
+          : decodePdfString(raw.slice(1, raw.lastIndexOf(")")));
     } else if (m[5] !== undefined) {
-      if (current.trim()) { lines.push(current.trim()); current = ""; }
+      if (current.trim()) {
+        lines.push(current.trim());
+        current = "";
+      }
       const raw = m[5];
-      current += raw[0] === "<"
-        ? decodePdfHexString(raw.slice(1, raw.lastIndexOf(">")))
-        : decodePdfString(raw.slice(1, raw.lastIndexOf(")")));
+      current +=
+        raw[0] === "<"
+          ? decodePdfHexString(raw.slice(1, raw.lastIndexOf(">")))
+          : decodePdfString(raw.slice(1, raw.lastIndexOf(")")));
     }
   }
   if (current.trim()) lines.push(current.trim());
@@ -239,5 +279,7 @@ function decodePdfString(s: string): string {
     .replace(/\\\(/g, "(")
     .replace(/\\\)/g, ")")
     .replace(/\\\\/g, "\\")
-    .replace(/\\(\d{1,3})/g, (_, oct: string) => String.fromCharCode(parseInt(oct, 8)));
+    .replace(/\\(\d{1,3})/g, (_, oct: string) =>
+      String.fromCharCode(parseInt(oct, 8)),
+    );
 }

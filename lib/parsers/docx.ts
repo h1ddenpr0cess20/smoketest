@@ -17,7 +17,9 @@ const WML_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
  * @param arrayBuffer - The raw DOCX bytes.
  * @throws If `word/document.xml` is missing.
  */
-export async function extractDocxText(arrayBuffer: ArrayBuffer): Promise<string> {
+export async function extractDocxText(
+  arrayBuffer: ArrayBuffer,
+): Promise<string> {
   const zip = readZip(arrayBuffer);
 
   const docFile = zip.file("word/document.xml");
@@ -44,5 +46,8 @@ export async function extractDocxText(arrayBuffer: ArrayBuffer): Promise<string>
     lines.push(paraText);
   }
 
-  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return lines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }

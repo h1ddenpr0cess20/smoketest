@@ -19,14 +19,24 @@ describe("chunking", () => {
     const paragraph = `${"alpha ".repeat(200)}\n\n${"beta ".repeat(200)}`;
     const chunks = chunkText(paragraph, 800, 100);
     expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks[0].endsWith("alpha") || chunks[0].endsWith("alpha ")).toBe(true);
+    expect(chunks[0].endsWith("alpha") || chunks[0].endsWith("alpha ")).toBe(
+      true,
+    );
   });
 });
 
 describe("embedding model resolution", () => {
   it("prefers the override, then nomic, then any known embedder", () => {
-    expect(resolveEmbeddingModel("custom-embed", ["nomic-embed-text"])).toBe("custom-embed");
-    expect(resolveEmbeddingModel("", ["qwen3:8b", "mxbai-embed-large", "nomic-embed-text"])).toBe("nomic-embed-text");
+    expect(resolveEmbeddingModel("custom-embed", ["nomic-embed-text"])).toBe(
+      "custom-embed",
+    );
+    expect(
+      resolveEmbeddingModel("", [
+        "qwen3:8b",
+        "mxbai-embed-large",
+        "nomic-embed-text",
+      ]),
+    ).toBe("nomic-embed-text");
     expect(resolveEmbeddingModel("", ["qwen3:8b", "bge-m3"])).toBe("bge-m3");
     expect(resolveEmbeddingModel("", ["qwen3:8b", "llama3.2"])).toBeNull();
   });
@@ -39,18 +49,28 @@ describe("retrieval queries", () => {
   });
 
   it("prepends recent user turns for follow-ups, keeping the current message last", () => {
-    const query = buildRetrievalQuery(["tell me about the billing module", "and the retry logic?"], "what about its tests?");
+    const query = buildRetrievalQuery(
+      ["tell me about the billing module", "and the retry logic?"],
+      "what about its tests?",
+    );
     expect(query.endsWith("what about its tests?")).toBe(true);
     expect(query).toContain("billing module");
   });
 
   it("keeps inventory questions self-contained", () => {
-    expect(buildRetrievalQuery(["earlier context"], "list all documents")).toBe("list all documents");
+    expect(buildRetrievalQuery(["earlier context"], "list all documents")).toBe(
+      "list all documents",
+    );
   });
 });
 
 describe("ranking", () => {
-  const chunk = (name: string, text: string, vector: number[]): RagChunk => ({ name, text, vector, model: "m" });
+  const chunk = (name: string, text: string, vector: number[]): RagChunk => ({
+    name,
+    text,
+    vector,
+    model: "m",
+  });
 
   it("ranks by cosine similarity and respects the character budget", () => {
     const chunks = [
@@ -78,14 +98,22 @@ describe("ranking", () => {
 
 describe("reference block", () => {
   it("labels retrieved excerpts as untrusted", () => {
-    const block = buildReferenceBlock([{ name: "a.ts", text: "excerpt" }], ["a.ts"], "explain a.ts");
+    const block = buildReferenceBlock(
+      [{ name: "a.ts", text: "excerpt" }],
+      ["a.ts"],
+      "explain a.ts",
+    );
     expect(block).toContain("<reference-documents>");
     expect(block).toContain("untrusted reference material");
     expect(block).toContain("--- a.ts ---");
   });
 
   it("includes the source inventory for inventory questions", () => {
-    const block = buildReferenceBlock([], ["a.ts", "b.md"], "which files are attached?");
+    const block = buildReferenceBlock(
+      [],
+      ["a.ts", "b.md"],
+      "which files are attached?",
+    );
     expect(block).toContain("Attached sources:");
     expect(block).toContain("- b.md");
   });

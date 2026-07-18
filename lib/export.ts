@@ -2,7 +2,11 @@ import type { Message, Thread } from "./types";
 
 export type ExportFormatKey = "md" | "txt" | "html" | "json" | "csv";
 
-export const EXPORT_FORMATS: { key: ExportFormatKey; label: string; mime: string }[] = [
+export const EXPORT_FORMATS: {
+  key: ExportFormatKey;
+  label: string;
+  mime: string;
+}[] = [
   { key: "md", label: "Markdown", mime: "text/markdown" },
   { key: "txt", label: "Plain text", mime: "text/plain" },
   { key: "html", label: "HTML", mime: "text/html" },
@@ -11,7 +15,9 @@ export const EXPORT_FORMATS: { key: ExportFormatKey; label: string; mime: string
 ];
 
 function speaker(message: Message) {
-  return message.role === "user" ? "You" : `smoketest${message.model ? ` (${message.model})` : ""}`;
+  return message.role === "user"
+    ? "You"
+    : `smoketest${message.model ? ` (${message.model})` : ""}`;
 }
 
 function exportableMessages(thread: Thread) {
@@ -23,7 +29,10 @@ function stamp(timestamp: number) {
 }
 
 function escapeHtml(value: string) {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 export function renderExport(thread: Thread, format: ExportFormatKey): string {
@@ -52,10 +61,19 @@ export function renderExport(thread: Thread, format: ExportFormatKey): string {
 
   if (format === "csv") {
     const escape = (value: string) => `"${value.replace(/"/g, '""')}"`;
-    const rows = [["timestamp", "role", "provider", "model", "mode", "content"].join(",")];
+    const rows = [
+      ["timestamp", "role", "provider", "model", "mode", "content"].join(","),
+    ];
     for (const message of messages) {
       rows.push(
-        [stamp(message.createdAt), message.role, message.provider ?? "", message.model ?? "", message.mode ?? "", message.content]
+        [
+          stamp(message.createdAt),
+          message.role,
+          message.provider ?? "",
+          message.model ?? "",
+          message.mode ?? "",
+          message.content,
+        ]
           .map(escape)
           .join(","),
       );
@@ -67,7 +85,8 @@ export function renderExport(thread: Thread, format: ExportFormatKey): string {
     return [
       `${thread.title}\n${"=".repeat(Math.max(thread.title.length, 1))}`,
       ...messages.map(
-        (message) => `${speaker(message)} — ${new Date(message.createdAt).toLocaleString()}\n${message.content}`,
+        (message) =>
+          `${speaker(message)} — ${new Date(message.createdAt).toLocaleString()}\n${message.content}`,
       ),
     ].join("\n\n");
   }
@@ -113,5 +132,7 @@ export function exportFilename(thread: Thread, format: ExportFormatKey) {
 }
 
 export function exportMime(format: ExportFormatKey) {
-  return EXPORT_FORMATS.find((item) => item.key === format)?.mime ?? "text/plain";
+  return (
+    EXPORT_FORMATS.find((item) => item.key === format)?.mime ?? "text/plain"
+  );
 }

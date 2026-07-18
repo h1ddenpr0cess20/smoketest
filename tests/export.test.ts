@@ -8,8 +8,21 @@ const thread: Thread = {
   createdAt: 1752000000000,
   updatedAt: 1752000600000,
   messages: [
-    { id: "m1", role: "user", content: "Why does this \"crash\"?", createdAt: 1752000000000, mode: "ask" },
-    { id: "m2", role: "assistant", content: "Because of <script>alert(1)</script>\nline two", createdAt: 1752000300000, model: "gpt-5.6", provider: "openai" },
+    {
+      id: "m1",
+      role: "user",
+      content: 'Why does this "crash"?',
+      createdAt: 1752000000000,
+      mode: "ask",
+    },
+    {
+      id: "m2",
+      role: "assistant",
+      content: "Because of <script>alert(1)</script>\nline two",
+      createdAt: 1752000300000,
+      model: "gpt-5.6",
+      provider: "openai",
+    },
     { id: "m3", role: "assistant", content: "   ", createdAt: 1752000400000 },
   ],
 };
@@ -32,11 +45,16 @@ describe("session export", () => {
   it("escapes CSV quotes and keeps newlines quoted", () => {
     const output = renderExport(thread, "csv");
     expect(output).toContain('"Why does this ""crash""?"');
-    expect(output.split("\n")[0]).toBe("timestamp,role,provider,model,mode,content");
+    expect(output.split("\n")[0]).toBe(
+      "timestamp,role,provider,model,mode,content",
+    );
   });
 
   it("round-trips JSON", () => {
-    const parsed = JSON.parse(renderExport(thread, "json")) as { title: string; messages: unknown[] };
+    const parsed = JSON.parse(renderExport(thread, "json")) as {
+      title: string;
+      messages: unknown[];
+    };
     expect(parsed.title).toBe("Fix the parser!");
     expect(parsed.messages).toHaveLength(2);
   });

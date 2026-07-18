@@ -62,15 +62,22 @@ export const PROVIDERS: Record<ProviderId, ProviderDefinition> = {
 };
 
 export function isProviderId(value: unknown): value is ProviderId {
-  return typeof value === "string" && PROVIDER_IDS.includes(value as ProviderId);
+  return (
+    typeof value === "string" && PROVIDER_IDS.includes(value as ProviderId)
+  );
 }
 
-export function providerEndpoint(provider: ProviderId, resource: "responses" | "models" | "embeddings") {
+export function providerEndpoint(
+  provider: ProviderId,
+  resource: "responses" | "models" | "embeddings",
+) {
   return `${PROVIDERS[provider].baseUrl}/${resource}`;
 }
 
 export function authorizationHeaders(provider: ProviderId, apiKey: string) {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
   if (apiKey.trim()) headers.Authorization = `Bearer ${apiKey.trim()}`;
   else if (provider === "ollama") headers.Authorization = "Bearer ollama";
   else if (provider === "lmstudio") headers.Authorization = "Bearer lm-studio";

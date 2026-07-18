@@ -12,7 +12,12 @@
 // Embeddings are also cached by content hash, so attaching the same file again
 // (in any thread) reuses them instead of re-embedding.
 
-import { chunkText, rankChunks, DEFAULT_RETRIEVAL_TOP_K, DEFAULT_RETRIEVAL_CHARACTER_BUDGET } from "./rag";
+import {
+  chunkText,
+  rankChunks,
+  DEFAULT_RETRIEVAL_TOP_K,
+  DEFAULT_RETRIEVAL_CHARACTER_BUDGET,
+} from "./rag";
 import {
   deleteDocChunks,
   getCachedFileChunks,
@@ -23,7 +28,10 @@ import {
 } from "./docChunkStorage";
 
 /** Fetches embedding vectors for a batch of texts, one vector per input. */
-export type EmbedFn = (texts: string[], signal?: AbortSignal) => Promise<number[][]>;
+export type EmbedFn = (
+  texts: string[],
+  signal?: AbortSignal,
+) => Promise<number[][]>;
 
 type ThreadIndex = {
   chunks: StoredDocChunk[];
@@ -50,13 +58,21 @@ function getIndex(threadId: string): ThreadIndex {
 
 /** Sorted source paths currently represented in a thread's index. */
 export function getIndexedDocumentNames(threadId: string): string[] {
-  return [...new Set(getIndex(threadId).chunks.map((chunk) => chunk.name))].sort((a, b) => a.localeCompare(b));
+  return [
+    ...new Set(getIndex(threadId).chunks.map((chunk) => chunk.name)),
+  ].sort((a, b) => a.localeCompare(b));
 }
 
 /** Counts both chunks and distinct source paths for user-facing diagnostics. */
-export function getLocalDocIndexStats(threadId: string): { chunks: number; documents: number } {
+export function getLocalDocIndexStats(threadId: string): {
+  chunks: number;
+  documents: number;
+} {
   const index = getIndex(threadId);
-  return { chunks: index.chunks.length, documents: getIndexedDocumentNames(threadId).length };
+  return {
+    chunks: index.chunks.length,
+    documents: getIndexedDocumentNames(threadId).length,
+  };
 }
 
 /** Drops a thread's in-memory index and its persisted record. */
@@ -113,7 +129,10 @@ export function restoreLocalDocIndex(threadId: string): Promise<number> {
 }
 
 /** Copies a thread's index to a new thread id (used when branching a session). */
-export async function branchLocalDocIndex(sourceThreadId: string, targetThreadId: string): Promise<void> {
+export async function branchLocalDocIndex(
+  sourceThreadId: string,
+  targetThreadId: string,
+): Promise<void> {
   await restoreLocalDocIndex(sourceThreadId).catch(() => 0);
   const source = getIndex(sourceThreadId);
   if (source.chunks.length === 0) return;
@@ -125,14 +144,24 @@ export async function branchLocalDocIndex(sourceThreadId: string, targetThreadId
 /** SHA-256 of the text as hex, or `null` when hashing is unavailable. */
 async function hashText(text: string): Promise<string | null> {
   try {
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-    return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(text),
+    );
+    return Array.from(new Uint8Array(digest), (b) =>
+      b.toString(16).padStart(2, "0"),
+    ).join("");
   } catch {
     return null;
   }
 }
 
-export type IndexResult = { indexed: number; chunks: number; cached: number; failed: string[] };
+export type IndexResult = {
+  indexed: number;
+  chunks: number;
+  cached: number;
+  failed: string[];
+};
 
 /**
  * Chunks and embeds the given documents (already extracted to text), adding
@@ -151,7 +180,12 @@ export async function indexDocuments(
   await restoreLocalDocIndex(threadId).catch(() => 0);
   const index = getIndex(threadId);
   const originalChunks = [...index.chunks];
-  const pending: { name: string; text: string; cacheKey: string | null; vectorKey: string }[] = [];
+  const pending: {
+    name: string;
+    text: string;
+    cacheKey: string | null;
+    vectorKey: string;
+  }[] = [];
   const failed: string[] = [];
   let indexed = 0;
   let cachedFiles = 0;
@@ -175,7 +209,9 @@ export async function indexDocuments(
         const cached = await getCachedFileChunks(cacheKey).catch(() => null);
         if (cached) {
           removeSource(name);
-          index.chunks.push(...cached.map((chunk) => ({ ...chunk, name, cacheKey })));
+          index.chunks.push(
+            ...cached.map((chunk) => ({ ...chunk, name, cacheKey })),
+          );
           indexed++;
           cachedFiles++;
           cachedChunks += cached.length;
@@ -209,7 +245,9 @@ export async function indexDocuments(
       inputEntries.map(([, text]) => text),
       signal,
     );
-    const vectorByKey = new Map(inputEntries.map(([key], i) => [key, vectors[i]]));
+    const vectorByKey = new Map(
+      inputEntries.map(([key], i) => [key, vectors[i]]),
+    );
 
     const byCacheKey = new Map<string, StoredDocChunk[]>();
     const replacedSources = new Set<string>();
@@ -259,7 +297,12 @@ export async function indexDocuments(
       }
     }
     if (cacheWriteFailed) await persistLocalDocIndex(threadId);
-    return { indexed, chunks: cachedChunks + pending.length, cached: cachedFiles, failed };
+    return {
+      indexed,
+      chunks: cachedChunks + pending.length,
+      cached: cachedFiles,
+      failed,
+    };
   } catch (error) {
     index.chunks = originalChunks;
     throw error;
@@ -350,8 +393,10 @@ export async function retrieveRelevantChunks(
   }
 
   const [queryVector] = await embed([query], signal);
-  return rankChunks(scorable, queryVector, query, topK, characterBudget).map((chunk) => ({
-    name: chunk.name,
-    text: chunk.text,
-  }));
+  return rankChunks(scorable, queryVector, query, topK, characterBudget).map(
+    (chunk) => ({
+      name: chunk.name,
+      text: chunk.text,
+    }),
+  );
 }
