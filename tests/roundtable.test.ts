@@ -141,7 +141,7 @@ describe("roundtable tool access", () => {
     });
   });
 
-  it("keeps xAI-only grants effective and drops every provider tool locally", () => {
+  it("keeps xAI-only grants effective and allows MCP for LM Studio", () => {
     expect(
       effectiveToolRequest(
         participants[1],
@@ -158,7 +158,7 @@ describe("roundtable tool access", () => {
       codeInterpreter: false,
       fileSearch: false,
       vectorStoreIds: [],
-      mcpServers: [],
+      mcpServers: [{ label: "repo", url: "https://example.com/mcp" }],
     });
     expect(
       effectiveToolRequest(participants[0], "ollama", settings, servers),
