@@ -101,4 +101,4 @@ The container exposes a health check at `/api/health`. Remember that local-provi
 
 ## Project origin
 
-smoketest grows out of the author's earlier **wordmark** and **darkwords** projects. After **Grok Build** was open-sourced, its codebase was adapted to that existing work to create smoketest. **brainworm** came afterward and informed later Responses API, tool, streaming, and file-download refinements. smoketest remains a separate project and does not depend on or modify the other repositories.
+smoketest grows out of the author's earlier **wordmark** and **darkwords** projects. After **Grok Build** was open-sourced, its codebase was adapted to that existing work to create **brainworm**, and then the next day, smoketest.
