@@ -1253,7 +1253,23 @@ export default function Home() {
               const priorUserTexts = priorMessages
                 .filter((message) => message.role === "user")
                 .map((message) => message.content);
-              const query = buildRetrievalQuery(priorUserTexts, prompt);
+              // A build turn straight after a plan (the approve handoff)
+              // carries a generic prompt ("Implement the approved plan…")
+              // that embeds to nothing useful — the plan's own text (files,
+              // utilities, approach) is the retrieval signal, so it leads
+              // the query. Matched by position+mode, not planState: the
+              // approval patch hasn't landed in this closure's snapshot yet,
+              // and on later build turns the user's own message should
+              // dominate retrieval instead.
+              const lastAssistant = [...priorMessages]
+                .reverse()
+                .find((message) => message.role === "assistant" && !message.error && message.content);
+              const latestPlan =
+                activeMode === "build" && lastAssistant?.mode === "plan" ? lastAssistant : undefined;
+              const query = buildRetrievalQuery(
+                priorUserTexts,
+                latestPlan ? `${latestPlan.content.slice(0, 4000)}\n\n${prompt}` : prompt,
+              );
               const retrieved = await retrieveRelevantChunks(
                 threadId,
                 query,
