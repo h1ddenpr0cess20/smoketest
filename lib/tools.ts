@@ -33,7 +33,7 @@ export const TOOL_SUPPORT: Record<
     xSearch: false,
     codeInterpreter: false,
     fileSearch: false,
-    mcp: false,
+    mcp: true,
   },
   ollama: {
     webSearch: false,

@@ -20,7 +20,7 @@ const thread: Thread = {
       role: "assistant",
       content: "Because of <script>alert(1)</script>\nline two",
       createdAt: 1752000300000,
-      model: "gpt-5.6",
+      model: "gpt-5.6-sol",
       provider: "openai",
     },
     { id: "m3", role: "assistant", content: "   ", createdAt: 1752000400000 },
@@ -32,7 +32,7 @@ describe("session export", () => {
     const output = renderExport(thread, "md");
     expect(output).toContain("# Fix the parser!");
     expect(output).toContain("### You");
-    expect(output).toContain("### smoketest (gpt-5.6)");
+    expect(output).toContain("### smoketest (gpt-5.6-sol)");
     expect(output.match(/^### /gm)).toHaveLength(2);
   });
 

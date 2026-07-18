@@ -20,7 +20,7 @@ export const PROVIDERS: Record<ProviderId, ProviderDefinition> = {
     name: "OpenAI",
     shortName: "OA",
     baseUrl: "https://api.openai.com/v1",
-    defaultModel: "gpt-5.6",
+    defaultModel: "gpt-5.6-sol",
     apiKeyRequired: true,
     local: false,
     accent: "#7ce4bb",
