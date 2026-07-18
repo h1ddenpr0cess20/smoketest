@@ -20,6 +20,20 @@ smoketest supports four Responses API-compatible targets:
 
 There are no Chat Completions adapters and no provider SDKs. The app sends the same minimal Responses request shape to every provider and consumes standard Responses streaming events.
 
+## Screenshots
+
+Conversation view in the Smoke (light) theme:
+
+![Conversation in the Smoke theme](./docs/screenshots/conversation-smoke.png)
+
+The same session in the Ember (dark) theme:
+
+![Conversation in the Ember theme](./docs/screenshots/conversation-ember.png)
+
+Roundtable planning, where several model participants plan a change together:
+
+![Roundtable planning setup](./docs/screenshots/roundtable-setup.png)
+
 ## Features
 
 - Ask, Plan, and Build coding modes
