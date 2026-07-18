@@ -1547,6 +1547,87 @@ select:focus-visible {
   opacity: 0.4;
   cursor: default;
 }
+.message-queue {
+  width: min(840px, 100%);
+  margin: 0 auto 7px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--raised) 92%, transparent);
+  box-shadow: 0 7px 24px color-mix(in srgb, var(--shadow) 60%, transparent);
+}
+.message-queue header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.message-queue header strong {
+  color: var(--accent);
+  font: 700 9px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.message-queue header span {
+  color: var(--faint);
+  font: 8.5px var(--font-mono);
+}
+.message-queue ol {
+  max-height: 132px;
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.message-queue li {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.queue-mode,
+.queue-files {
+  flex: none;
+  color: var(--faint);
+  font: 8px var(--font-mono);
+  text-transform: uppercase;
+}
+.queue-mode {
+  color: var(--accent);
+}
+.queue-copy {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font: 10px var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.message-queue li button {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--faint);
+  background: transparent;
+  cursor: pointer;
+}
+.message-queue li button:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+}
 .composer {
   position: relative;
   width: min(840px, 100%);
@@ -1629,6 +1710,15 @@ select:focus-visible {
   align-items: center;
   gap: 4px;
   padding: 4px 8px 8px 16px;
+}
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.composer-send.is-queue {
+  color: var(--accent-ink);
+  background: var(--accent);
 }
 .composer-hint {
   min-width: 0;

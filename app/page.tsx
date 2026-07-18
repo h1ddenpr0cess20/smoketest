@@ -106,6 +106,13 @@ import {
   type ExportTheme,
 } from "@/lib/export";
 import { generatedFileDownloadName } from "@/lib/downloads";
+import { normalizeChatHref } from "@/lib/chatLinks";
+import {
+  enqueueMessage,
+  nextQueuedMessageForThread,
+  removeQueuedMessage,
+  type QueuedMessage,
+} from "@/lib/messageQueue";
 
 const STORAGE = {
   threads: "smoketest.threads.v1",
@@ -1134,8 +1141,13 @@ const MessageView = memo(function MessageView({
                 rehypePlugins={[rehypeHighlight]}
                 components={{
                   pre: CodeBlock,
-                  a: ({ children, ...props }) => (
-                    <a {...props} target="_blank" rel="noreferrer">
+                  a: ({ children, href, ...props }) => (
+                    <a
+                      {...props}
+                      href={normalizeChatHref(href)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       {children}
                     </a>
                   ),
@@ -1290,6 +1302,7 @@ export default function Home() {
   const [theme, setTheme] = useState<"smoke" | "ember">("smoke");
   const [reasoning, setReasoning] = useState("medium");
   const [draft, setDraft] = useState("");
+  const [messageQueue, setMessageQueue] = useState<QueuedMessage[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [streaming, setStreaming] = useState(false);
@@ -1324,6 +1337,7 @@ export default function Home() {
   const indexingRef = useRef<Promise<unknown> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const queuedSubmitRef = useRef<(message: QueuedMessage) => void>(() => {});
 
   const activeThread = useMemo(
     () => threads.find((thread) => thread.id === activeId) ?? threads[0],
@@ -1510,6 +1524,9 @@ export default function Home() {
     if (streaming) return;
     if (threadId === activeId) stopRoundtable("stopped");
     void deleteLocalDocIndex(threadId);
+    setMessageQueue((current) =>
+      current.filter((message) => message.threadId !== threadId),
+    );
     const next = threads.filter((thread) => thread.id !== threadId);
     if (!next.length) {
       const replacement = blankThread();
@@ -2434,19 +2451,35 @@ export default function Home() {
       void synthesizeRoundtable(runtime);
   }
 
-  async function submit(value = draft, modeOverride?: Mode) {
+  async function submit(
+    value = draft,
+    modeOverride?: Mode,
+    attachmentOverride?: Attachment[],
+  ) {
     let prompt = value.trim();
+    const pendingAttachments = attachmentOverride ?? attachments;
     const acceptingRoundtableInterjection =
       mode === "plan" &&
       planStyle === "roundtable" &&
       roundtableStatus === "running";
-    if (
-      !prompt ||
-      (streaming && !acceptingRoundtableInterjection) ||
-      !activeThread
-    )
-      return;
+    if (!prompt || !activeThread) return;
     let activeMode = modeOverride ?? mode;
+
+    if (streaming && !acceptingRoundtableInterjection) {
+      setMessageQueue((current) =>
+        enqueueMessage(current, {
+          id: id(),
+          threadId: activeThread.id,
+          content: prompt,
+          mode: activeMode,
+          attachments: pendingAttachments,
+        }),
+      );
+      setDraft("");
+      setAttachments([]);
+      setAttachNote(null);
+      return;
+    }
 
     const command = parseCommand(prompt);
     if (command) {
@@ -2519,7 +2552,7 @@ export default function Home() {
       role: "user",
       content: prompt,
       createdAt: timestamp(),
-      attachments,
+      attachments: pendingAttachments,
       mode: activeMode,
     };
     const assistantId = id();
@@ -2534,7 +2567,6 @@ export default function Home() {
       planState: activeMode === "plan" ? "proposed" : undefined,
     };
     const priorMessages = activeThread.messages;
-    const pendingAttachments = attachments;
     const isFirst = activeThread.messages.length === 0;
     setThreads((current) =>
       current.map((thread) =>
@@ -2548,9 +2580,11 @@ export default function Home() {
           : thread,
       ),
     );
-    setDraft("");
-    setAttachments([]);
-    setAttachNote(null);
+    if (attachmentOverride === undefined) {
+      setDraft("");
+      setAttachments([]);
+      setAttachNote(null);
+    }
     setStreaming(true);
     setStreamingId(assistantId);
     autoScrollRef.current = true;
@@ -2739,6 +2773,23 @@ export default function Home() {
       abortRef.current = null;
     }
   }
+
+  useEffect(() => {
+    queuedSubmitRef.current = (message) => {
+      void submit(message.content, message.mode, message.attachments);
+    };
+  });
+
+  useEffect(() => {
+    if (streaming || !activeThread) return;
+    const next = nextQueuedMessageForThread(messageQueue, activeThread.id);
+    if (!next) return;
+    const timer = window.setTimeout(() => {
+      setMessageQueue((current) => removeQueuedMessage(current, next.id));
+      queuedSubmitRef.current(next);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeThread, messageQueue, streaming]);
 
   // Regeneration ported from brainworm: the current reply is snapshotted as a
   // variant, the turn is re-run against the history before this message, and
@@ -3035,13 +3086,19 @@ export default function Home() {
     textareaRef.current?.focus();
   }
 
+  const standardComposerCanQueue =
+    streaming && !(mode === "plan" && planStyle === "roundtable");
   const canSend = Boolean(
     draft.trim() &&
     currentSettings.model.trim() &&
     (!streaming ||
+      standardComposerCanQueue ||
       (mode === "plan" &&
         planStyle === "roundtable" &&
         roundtableStatus === "running")),
+  );
+  const activeQueuedMessages = messageQueue.filter(
+    (message) => message.threadId === activeThread?.id,
   );
   const roundtableConfig = activeThread?.roundtableConfig;
   const hasRoundtableDiscussion = Boolean(
@@ -3551,6 +3608,41 @@ export default function Home() {
                 </div>
               </div>
             )}
+          {activeQueuedMessages.length > 0 && (
+            <section className="message-queue" aria-label="Queued messages">
+              <header>
+                <strong>{activeQueuedMessages.length} queued</strong>
+                <span>Sent in order after the current response</span>
+              </header>
+              <ol>
+                {activeQueuedMessages.map((message) => (
+                  <li key={message.id}>
+                    <span className="queue-mode">
+                      {MODE_COPY[message.mode].label}
+                    </span>
+                    <span className="queue-copy">{message.content}</span>
+                    {message.attachments.length > 0 && (
+                      <span className="queue-files">
+                        {message.attachments.length} file
+                        {message.attachments.length === 1 ? "" : "s"}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMessageQueue((current) =>
+                          removeQueuedMessage(current, message.id),
+                        )
+                      }
+                      aria-label="Remove queued message"
+                    >
+                      <Icon name="close" size={12} />
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
           <form
             className={`composer ${dragOver ? "drag-over" : ""}`}
             onSubmit={onSubmit}
@@ -3617,7 +3709,9 @@ export default function Home() {
                   ? roundtableStatus === "running"
                     ? "Interject, or address one participant by name…"
                     : "Describe the task for the roundtable…"
-                  : `Message ${currentSettings.model || currentProvider.name}…`
+                  : streaming
+                    ? "Queue another message…"
+                    : `Message ${currentSettings.model || currentProvider.name}…`
               }
               rows={1}
               aria-label="Message"
@@ -3683,16 +3777,26 @@ export default function Home() {
                   </div>
                 )}
               </div>
-              {streaming && !(mode === "plan" && planStyle === "roundtable") ? (
-                <button
-                  type="button"
-                  className="composer-send is-stop"
-                  onClick={() => abortRef.current?.abort()}
-                  title="Stop generating"
-                  aria-label="Stop generating"
-                >
-                  <Icon name="stop" size={16} />
-                </button>
+              {standardComposerCanQueue ? (
+                <div className="composer-actions">
+                  <button
+                    type="button"
+                    className="composer-send is-stop"
+                    onClick={() => abortRef.current?.abort()}
+                    title="Stop generating"
+                    aria-label="Stop generating"
+                  >
+                    <Icon name="stop" size={16} />
+                  </button>
+                  <button
+                    className="composer-send is-queue"
+                    disabled={!canSend}
+                    title="Add to queue"
+                    aria-label="Add message to queue"
+                  >
+                    <Icon name="send" size={17} />
+                  </button>
+                </div>
               ) : (
                 <button
                   className="composer-send"
