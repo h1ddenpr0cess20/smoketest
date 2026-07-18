@@ -18,6 +18,7 @@ export default defineConfig({
         "lib/export.ts",
         "lib/providers.ts",
         "lib/rag.ts",
+        "lib/roundtable/index.ts",
         "lib/stream.ts",
         "lib/tools.ts",
       ],
