@@ -10,6 +10,7 @@ import {
   leastRecentlyHeard,
   moderatorPrompt,
   parseModeratorDecision,
+  participantInstructions,
   participantPrompt,
   recordModeratorFailure,
   recordModeratorSuccess,
@@ -201,15 +202,15 @@ describe("roundtable prompt context", () => {
     participantId: index % 2 ? "architect" : undefined,
   }));
 
-  it("bounds participant and moderator discussion context to 12 lines", () => {
+  it("bounds participant and moderator discussion context to 6 chat turns", () => {
     const window = latestDiscussionWindow(messages, "run");
-    expect(window).toHaveLength(12);
-    expect(window[0]).toContain("line 2");
+    expect(window).toHaveLength(6);
+    expect(window[0]).toContain("line 8");
     const participant = participantPrompt("Ship it", window, "--- app.ts ---");
     expect(participant).toContain("Ship it");
     expect(participant).toContain("--- app.ts ---");
-    expect(participant).not.toContain("Pat: line 0");
-    expect(participant).not.toContain("Architect: line 1\n");
+    expect(participant).not.toContain("Pat: line 6");
+    expect(participant).not.toContain("Architect: line 7\n");
     const moderator = moderatorPrompt(
       { participants },
       "Ship it",
@@ -218,6 +219,15 @@ describe("roundtable prompt context", () => {
     );
     expect(moderator).toContain("READY is not allowed");
     expect(moderator).not.toContain("--- app.ts ---");
+  });
+
+  it("asks for chat turns rather than per-speaker reports", () => {
+    const instructions = participantInstructions(participants[0]);
+    expect(instructions).toContain("group chat");
+    expect(instructions).toContain("one to three short paragraphs");
+    expect(instructions).toContain("Go longer only when");
+    expect(instructions).toContain("Do not use headings");
+    expect(instructions).toContain("do not cram all of these into every turn");
   });
 
   it("keeps the full transcript available for synthesis", () => {

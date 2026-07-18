@@ -13,7 +13,9 @@ export type ModeratorDecision =
   | { type: "ready"; reason: string }
   | { type: "invalid" };
 
-export const DISCUSSION_WINDOW_LINES = 12;
+// Darkwords keeps party turns conversational by replaying a small recent
+// window instead of inviting every speaker to recap the entire discussion.
+export const DISCUSSION_WINDOW_LINES = 6;
 
 export function validParticipant(participant: RoundtableParticipant) {
   return Boolean(participant.name.trim() && participant.perspective.trim());
@@ -175,7 +177,7 @@ export function discussionLines(messages: Message[], runId: string) {
     )
     .map(
       (message) =>
-        `${message.displayName || (message.role === "user" ? "User" : "Participant")}: ${message.content.replace(/\s+/g, " ").trim()}`,
+        `${message.displayName || (message.role === "user" ? "User" : "Participant")}: ${message.content.replace(/\s+/g, " ").trim().slice(0, 1200)}`,
     );
 }
 
@@ -187,9 +189,11 @@ export function participantInstructions(participant: RoundtableParticipant) {
   return [
     `You are ${participant.name}, participating in a coding-planning roundtable.`,
     `Your perspective: ${participant.perspective}`,
-    "Deliberate only; do not provide full implementation patches or claim to edit files.",
-    "Ground claims in supplied code context, expose assumptions, critique proposals, and identify concrete files, existing utilities, risks, and tests.",
-    "Respond with a focused contribution to the discussion. Do not impersonate another participant or decide that the roundtable is complete.",
+    "This is a group chat, not a sequence of reports. Make one useful point, question, or response at a time and leave room for others.",
+    "Be concise by default—usually one to three short paragraphs. Go longer only when a concrete code finding genuinely needs explanation.",
+    "Do not use headings, plan sections, exhaustive checklists, or recaps. Do not restate the objective or prefix the response with your name.",
+    "Across the discussion, help ground claims in supplied code, expose assumptions, critique proposals, and surface relevant files, utilities, risks, and tests; do not cram all of these into every turn.",
+    "Deliberate only: do not provide full implementation patches, claim to edit files, impersonate another participant, or decide that the roundtable is complete.",
   ].join("\n");
 }
 
@@ -204,7 +208,7 @@ export function participantPrompt(
     lines.length
       ? `LATEST DISCUSSION (${DISCUSSION_WINDOW_LINES}-line maximum):\n${lines.join("\n")}`
       : "LATEST DISCUSSION: No participant has spoken yet.",
-    "Add the most useful next planning contribution.",
+    "Respond naturally to the latest speaker with one useful next contribution. Use only the repository details needed to make that point.",
   ]
     .filter(Boolean)
     .join("\n\n");

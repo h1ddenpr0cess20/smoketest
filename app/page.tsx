@@ -2145,7 +2145,7 @@ export default function Home() {
                 content: moderatorPrompt(
                   config,
                   runtime.objective,
-                  runtime.lines.slice(-12),
+                  runtime.lines.slice(-6),
                   canAcceptReady(runtime.progress, participants),
                 ),
               },
@@ -2236,7 +2236,7 @@ export default function Home() {
               role: "user",
               content: participantPrompt(
                 runtime.objective,
-                runtime.lines.slice(-12),
+                runtime.lines.slice(-6),
                 context,
               ),
             },
@@ -2291,7 +2291,7 @@ export default function Home() {
         generatedFiles: outcome.generatedFiles,
       });
       runtime.lines.push(
-        `${participant.name}: ${content.replace(/\s+/g, " ").trim()}`,
+        `${participant.name}: ${content.replace(/\s+/g, " ").trim().slice(0, 1200)}`,
       );
       runtime.progress = recordParticipantTurn(
         runtime.progress,
