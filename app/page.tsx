@@ -607,6 +607,7 @@ type RoundtableRuntime = {
   objective: string;
   progress: RoundtableProgress;
   lines: string[];
+  attachments: Attachment[];
   pendingInterjections: string[];
   pauseRequested: boolean;
   stopRequested: boolean;
@@ -1953,6 +1954,9 @@ export default function Home() {
       objective,
       progress,
       lines: discussionLines(runMessages, lastRunId),
+      attachments: thread.messages.flatMap(
+        (message) => message.attachments ?? [],
+      ),
       pendingInterjections: [],
       pauseRequested: false,
       stopRequested: false,
@@ -1963,11 +1967,15 @@ export default function Home() {
   async function sharedRoundtableContext(
     threadId: string,
     query: string,
+    runtimeAttachments: Attachment[],
     signal: AbortSignal,
   ) {
     const thread = threadsRef.current.find((item) => item.id === threadId);
-    const allAttachments =
-      thread?.messages.flatMap((message) => message.attachments ?? []) ?? [];
+    const allAttachments = [
+      ...(thread?.messages.flatMap((message) => message.attachments ?? []) ??
+        []),
+      ...runtimeAttachments,
+    ];
     const byName = new Map<string, Attachment>();
     for (const attachment of allAttachments)
       byName.set(attachment.name, attachment);
@@ -2179,6 +2187,15 @@ export default function Home() {
               : leastRecentlyHeard(participants, runtime.progress);
         }
       }
+      if (runtime.stopRequested) break;
+      if (runtime.synthesisRequested) {
+        await synthesizeRoundtable(runtime);
+        return;
+      }
+      if (runtime.pauseRequested) {
+        setRoundtableStatus("paused");
+        return;
+      }
       if (!participant) {
         setRoundtableError("No valid participant could be selected.");
         setRoundtableStatus("paused");
@@ -2206,6 +2223,7 @@ export default function Home() {
       const context = await sharedRoundtableContext(
         runtime.threadId,
         `${runtime.objective}\n${runtime.lines.slice(-4).join("\n")}`,
+        runtime.attachments,
         controller.signal,
       );
       const outcome = await streamAssistant(
@@ -2320,6 +2338,9 @@ export default function Home() {
         objective: prompt,
         progress: initialProgress(),
         lines: [],
+        attachments: activeThread.messages.flatMap(
+          (message) => message.attachments ?? [],
+        ),
         pendingInterjections: [],
         pauseRequested: false,
         stopRequested: false,
@@ -2349,6 +2370,7 @@ export default function Home() {
       ),
     );
     runtime.lines.push(`${userName}: ${prompt.replace(/\s+/g, " ").trim()}`);
+    runtime.attachments.push(...attachments);
     runtime.pendingInterjections.push(prompt);
     runtime.pauseRequested = false;
     runtime.stopRequested = false;
@@ -3019,6 +3041,10 @@ export default function Home() {
   );
   const roundtableRunning =
     roundtableStatus === "running" || roundtableStatus === "pausing";
+  const displayedRoundtableTurnCount =
+    roundtableTurnCount ||
+    (activeThread?.messages.filter((message) => message.participantId).length ??
+      0);
   const showRoundtableSetup =
     mode === "plan" && planStyle === "roundtable" && !hasRoundtableDiscussion;
 
@@ -3464,8 +3490,8 @@ export default function Home() {
                       ))}
                   </div>
                   <small className={`roundtable-status ${roundtableStatus}`}>
-                    {roundtableStatus} · {roundtableTurnCount} turn
-                    {roundtableTurnCount === 1 ? "" : "s"}
+                    {roundtableStatus} · {displayedRoundtableTurnCount} turn
+                    {displayedRoundtableTurnCount === 1 ? "" : "s"}
                   </small>
                   {roundtableError && (
                     <small className="roundtable-error" role="alert">
@@ -3484,7 +3510,8 @@ export default function Home() {
                     hasRoundtableDiscussion && (
                       <button onClick={continueRoundtable}>Continue</button>
                     )}
-                  {roundtableRunning && (
+                  {(roundtableRunning ||
+                    roundtableStatus === "synthesizing") && (
                     <button
                       className="secondary"
                       onClick={() => stopRoundtable("stopped")}
