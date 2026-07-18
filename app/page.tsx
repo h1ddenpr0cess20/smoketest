@@ -106,6 +106,7 @@ import {
   type ExportTheme,
 } from "@/lib/export";
 import { generatedFileDownloadName } from "@/lib/downloads";
+import { normalizeChatHref } from "@/lib/chatLinks";
 import {
   enqueueMessage,
   nextQueuedMessageForThread,
@@ -1140,8 +1141,13 @@ const MessageView = memo(function MessageView({
                 rehypePlugins={[rehypeHighlight]}
                 components={{
                   pre: CodeBlock,
-                  a: ({ children, ...props }) => (
-                    <a {...props} target="_blank" rel="noreferrer">
+                  a: ({ children, href, ...props }) => (
+                    <a
+                      {...props}
+                      href={normalizeChatHref(href)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       {children}
                     </a>
                   ),

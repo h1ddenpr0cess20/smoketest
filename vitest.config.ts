@@ -12,6 +12,7 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "json-summary", "html"],
       include: [
+        "lib/chatLinks.ts",
         "lib/commands.ts",
         "lib/docPaths.ts",
         "lib/downloads.ts",
