@@ -2,8 +2,8 @@ import type { ProviderId } from "./providers";
 
 // Which provider-managed tools each Responses endpoint accepts: web_search,
 // code_interpreter, and file_search (vector stores) on OpenAI and xAI,
-// x_search on xAI only, and remote MCP servers on the cloud providers.
-// Local servers run no server-side tools.
+// x_search on xAI only, and remote MCP servers on OpenAI, xAI, and LM Studio.
+// Ollama runs no server-side tools.
 export const TOOL_SUPPORT: Record<
   ProviderId,
   {
@@ -33,7 +33,7 @@ export const TOOL_SUPPORT: Record<
     xSearch: false,
     codeInterpreter: false,
     fileSearch: false,
-    mcp: false,
+    mcp: true,
   },
   ollama: {
     webSearch: false,
