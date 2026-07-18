@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { exportFilename, renderExport } from "../lib/export";
+import { exportFilename, exportMime, renderExport } from "../lib/export";
 import type { Thread } from "../lib/types";
 
 const thread: Thread = {
@@ -62,6 +62,39 @@ describe("session export", () => {
     expect(output).toContain("--page:#0c0e0d");
   });
 
+  it("sanitizes links and images and renders attachment metadata", () => {
+    const richThread: Thread = {
+      ...thread,
+      messages: [
+        {
+          ...thread.messages[1],
+          model: undefined,
+          content:
+            '[docs](https://example.com "Reference") [unsafe](javascript:alert(1))\n\n![diagram](https://example.com/logo.png "Logo") ![unsafe image](javascript:alert(2))',
+          attachments: [
+            {
+              id: "a1",
+              name: "notes <final>.md",
+              content: "notes",
+              size: 5,
+            },
+          ],
+        },
+      ],
+    };
+    const output = renderExport(richThread, "html");
+    expect(output).toContain(
+      '<a href="https://example.com" title="Reference">docs</a>',
+    );
+    expect(output).not.toContain('href="javascript:');
+    expect(output).toContain(
+      '<img src="https://example.com/logo.png" alt="diagram" title="Logo">',
+    );
+    expect(output).not.toContain('src="javascript:');
+    expect(output).toContain("smoketest</span>");
+    expect(output).toContain("notes &lt;final&gt;.md");
+  });
+
   it("escapes CSV quotes and keeps newlines quoted", () => {
     const output = renderExport(thread, "csv");
     expect(output).toContain('"Why does this ""crash""?"');
@@ -87,7 +120,35 @@ describe("session export", () => {
     expect(parsed.messages).toHaveLength(2);
   });
 
+  it("includes attachments in text, markdown, and JSON exports", () => {
+    const attachedThread: Thread = {
+      ...thread,
+      messages: [
+        {
+          ...thread.messages[0],
+          attachments: [
+            { id: "a1", name: "context.txt", content: "context", size: 7 },
+          ],
+        },
+      ],
+    };
+    expect(renderExport(attachedThread, "txt")).toContain(
+      "Attachments: context.txt",
+    );
+    expect(renderExport(attachedThread, "md")).toContain(
+      "> Attached: context.txt",
+    );
+    const json = JSON.parse(renderExport(attachedThread, "json")) as {
+      messages: { attachments?: string[] }[];
+    };
+    expect(json.messages[0].attachments).toEqual(["context.txt"]);
+  });
+
   it("builds a safe filename", () => {
     expect(exportFilename(thread, "md")).toBe("fix-the-parser.md");
+    expect(exportFilename({ ...thread, title: "!!!" }, "txt")).toBe(
+      "session.txt",
+    );
+    expect(exportMime("html")).toBe("text/html");
   });
 });
