@@ -53,14 +53,17 @@ import {
   directlyAddressedParticipant,
   discussionLines,
   effectiveToolRequest,
+  hasEveryoneSpoken,
   initialProgress,
   leastRecentlyHeard,
   moderatorInstructions,
+  moderatorReadinessConfirmed,
   moderatorPrompt,
   parseModeratorDecision,
   participantInstructions,
   participantPrompt,
   recordParticipantTurn,
+  recordModeratorReadiness,
   synthesisInstructions,
   synthesisPrompt,
   validParticipant,
@@ -2145,6 +2148,7 @@ export default function Home() {
                   config,
                   runtime.objective,
                   runtime.lines.slice(-6),
+                  hasEveryoneSpoken(runtime.progress, participants),
                 ),
               },
             ],
@@ -2162,13 +2166,35 @@ export default function Home() {
         if (moderator.error) {
           // Routing is advisory. A moderator transport failure must never end
           // or pause the discussion; fairness fallback keeps the chat moving.
+          runtime.progress = recordModeratorReadiness(runtime.progress, false);
           participant = leastRecentlyHeard(participants, runtime.progress);
         } else {
           const decision = parseModeratorDecision(moderator.text, participants);
-          participant =
-            decision.type === "next"
-              ? participants.find((item) => item.id === decision.participantId)
-              : leastRecentlyHeard(participants, runtime.progress);
+          const readyEligible = hasEveryoneSpoken(
+            runtime.progress,
+            participants,
+          );
+          if (decision.type === "ready" && readyEligible) {
+            runtime.progress = recordModeratorReadiness(runtime.progress, true);
+            if (moderatorReadinessConfirmed(runtime.progress)) {
+              setRoundtableStatus("ready");
+              return;
+            }
+            // A first READY is advisory. Hear one more participant, then ask
+            // the moderator again so a single eager judgment cannot end chat.
+            participant = leastRecentlyHeard(participants, runtime.progress);
+          } else {
+            runtime.progress = recordModeratorReadiness(
+              runtime.progress,
+              false,
+            );
+            participant =
+              decision.type === "next"
+                ? participants.find(
+                    (item) => item.id === decision.participantId,
+                  )
+                : leastRecentlyHeard(participants, runtime.progress);
+          }
         }
       }
       if (runtime.stopRequested) break;
@@ -2354,6 +2380,7 @@ export default function Home() {
       ),
     );
     runtime.lines.push(`${userName}: ${prompt.replace(/\s+/g, " ").trim()}`);
+    runtime.progress = recordModeratorReadiness(runtime.progress, false);
     runtime.attachments.push(...attachments);
     runtime.pendingInterjections.push(prompt);
     runtime.pauseRequested = false;
@@ -2385,6 +2412,7 @@ export default function Home() {
     runtime.pauseRequested = false;
     runtime.stopRequested = false;
     runtime.synthesisRequested = false;
+    runtime.progress = recordModeratorReadiness(runtime.progress, false);
     roundtableRuntimeRef.current = runtime;
     setRoundtableError("");
     setRoundtableStatus("running");
@@ -3486,7 +3514,7 @@ export default function Home() {
                   {roundtableStatus === "pausing" && (
                     <button disabled>Pausing…</button>
                   )}
-                  {["paused", "stopped"].includes(roundtableStatus) &&
+                  {["paused", "ready", "stopped"].includes(roundtableStatus) &&
                     hasRoundtableDiscussion && (
                       <button onClick={continueRoundtable}>Continue</button>
                     )}

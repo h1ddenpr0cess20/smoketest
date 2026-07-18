@@ -9,7 +9,9 @@ import type {
 } from "./types";
 
 export type ModeratorDecision =
-  { type: "next"; participantId: string } | { type: "invalid" };
+  | { type: "next"; participantId: string }
+  | { type: "ready"; reason: string }
+  | { type: "invalid" };
 
 // Darkwords keeps party turns conversational by replaying a small recent
 // window instead of inviting every speaker to recap the entire discussion.
@@ -25,8 +27,10 @@ export function validRoundtableConfig(config: RoundtableConfig) {
 
 export function initialProgress(): RoundtableProgress {
   return {
+    spokenParticipantIds: [],
     lastSpokenTurn: {},
     turnCount: 0,
+    readySignals: 0,
   };
 }
 
@@ -42,7 +46,31 @@ export function parseModeratorDecision(
       ? { type: "next", participantId: participant.id }
       : { type: "invalid" };
   }
+  const ready = /^READY\s*:\s*([\s\S]+)$/i.exec(value);
+  if (ready?.[1].trim()) return { type: "ready", reason: ready[1].trim() };
   return { type: "invalid" };
+}
+
+export function hasEveryoneSpoken(
+  progress: RoundtableProgress,
+  participants: RoundtableParticipant[],
+) {
+  const spoken = new Set(progress.spokenParticipantIds);
+  return participants.every((participant) => spoken.has(participant.id));
+}
+
+export function recordModeratorReadiness(
+  progress: RoundtableProgress,
+  ready: boolean,
+): RoundtableProgress {
+  return {
+    ...progress,
+    readySignals: ready ? progress.readySignals + 1 : 0,
+  };
+}
+
+export function moderatorReadinessConfirmed(progress: RoundtableProgress) {
+  return progress.readySignals >= 2;
 }
 
 export function recordParticipantTurn(
@@ -53,6 +81,9 @@ export function recordParticipantTurn(
   return {
     ...progress,
     turnCount,
+    spokenParticipantIds: progress.spokenParticipantIds.includes(participantId)
+      ? progress.spokenParticipantIds
+      : [...progress.spokenParticipantIds, participantId],
     lastSpokenTurn: {
       ...progress.lastSpokenTurn,
       [participantId]: turnCount,
@@ -168,8 +199,8 @@ export function participantPrompt(
 export function moderatorInstructions() {
   return [
     "You are a neutral moderator routing a coding-planning roundtable.",
-    "Return exactly NEXT:<participant-id> to choose the most useful next speaker.",
-    "You only route turns. Never end, pause, summarize, or synthesize the discussion; those controls belong to the user.",
+    "Return exactly NEXT:<participant-id> to choose the most useful next speaker, or READY:<brief reason> when the discussion is mature enough for plan synthesis.",
+    "Use READY only when the important approaches, concrete code impact, risks, verification, and material dissent have been discussed. Do not synthesize the plan yourself.",
     "Do not add markdown or any other text.",
   ].join("\n");
 }
@@ -178,6 +209,7 @@ export function moderatorPrompt(
   config: RoundtableConfig,
   objective: string,
   lines: string[],
+  readyEligible: boolean,
 ) {
   const roster = config.participants
     .filter(validParticipant)
@@ -192,7 +224,9 @@ export function moderatorPrompt(
     lines.length
       ? `LATEST DISCUSSION:\n${lines.join("\n")}`
       : "LATEST DISCUSSION: none",
-    "Select the participant whose perspective would add the most useful next contribution.",
+    readyEligible
+      ? "Select the most useful next participant, or use READY only if the discussion is genuinely mature. A READY judgment is confirmed separately, so do not rush it."
+      : "READY is not eligible because every participant has not spoken yet. Select the most useful next participant.",
   ].join("\n\n");
 }
 

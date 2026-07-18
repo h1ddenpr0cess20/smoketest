@@ -22,9 +22,17 @@ export type RoundtableConfig = {
 };
 
 export type RoundtableStatus =
-  "off" | "running" | "pausing" | "paused" | "stopped" | "synthesizing";
+  | "off"
+  | "running"
+  | "pausing"
+  | "paused"
+  | "ready"
+  | "stopped"
+  | "synthesizing";
 
 export type RoundtableProgress = {
+  spokenParticipantIds: string[];
   lastSpokenTurn: Record<string, number>;
   turnCount: number;
+  readySignals: number;
 };

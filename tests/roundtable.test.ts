@@ -3,14 +3,17 @@ import {
   directlyAddressedParticipant,
   discussionLines,
   effectiveToolRequest,
+  hasEveryoneSpoken,
   initialProgress,
   latestDiscussionWindow,
   leastRecentlyHeard,
   moderatorInstructions,
+  moderatorReadinessConfirmed,
   moderatorPrompt,
   parseModeratorDecision,
   participantInstructions,
   participantPrompt,
+  recordModeratorReadiness,
   recordParticipantTurn,
 } from "../lib/roundtable";
 import type { Message, ProviderConfig } from "../lib/types";
@@ -47,14 +50,14 @@ const settings: ProviderConfig = {
 };
 
 describe("roundtable moderator routing", () => {
-  it("parses strict NEXT responses and rejects attempts to end the chat", () => {
+  it("parses strict NEXT and READY responses", () => {
     expect(parseModeratorDecision("NEXT:architect", participants)).toEqual({
       type: "next",
       participantId: "architect",
     });
     expect(
       parseModeratorDecision("READY: Coverage is sufficient", participants),
-    ).toEqual({ type: "invalid" });
+    ).toEqual({ type: "ready", reason: "Coverage is sufficient" });
     expect(parseModeratorDecision("NEXT:unknown", participants)).toEqual({
       type: "invalid",
     });
@@ -92,6 +95,20 @@ describe("roundtable moderator routing", () => {
     expect(leastRecentlyHeard(participants, progress).id).toBe("architect");
     progress = recordParticipantTurn(progress, "architect");
     expect(leastRecentlyHeard(participants, progress).id).toBe("security");
+  });
+
+  it("requires full participation and two separated readiness signals", () => {
+    let progress = recordParticipantTurn(initialProgress(), "architect");
+    expect(hasEveryoneSpoken(progress, participants)).toBe(false);
+    progress = recordParticipantTurn(progress, "security");
+    expect(hasEveryoneSpoken(progress, participants)).toBe(true);
+
+    progress = recordModeratorReadiness(progress, true);
+    expect(moderatorReadinessConfirmed(progress)).toBe(false);
+    progress = recordParticipantTurn(progress, "architect");
+    progress = recordModeratorReadiness(progress, true);
+    expect(moderatorReadinessConfirmed(progress)).toBe(true);
+    expect(recordModeratorReadiness(progress, false).readySignals).toBe(0);
   });
 });
 
@@ -155,13 +172,10 @@ describe("roundtable tool access", () => {
     });
   });
 
-  it("limits the moderator to routing instead of ending the discussion", () => {
+  it("allows the moderator to recommend maturity without synthesizing", () => {
     const instructions = moderatorInstructions();
-    expect(instructions).toContain("You only route turns");
-    expect(instructions).toContain(
-      "Never end, pause, summarize, or synthesize",
-    );
-    expect(instructions).not.toContain("READY:");
+    expect(instructions).toContain("READY:<brief reason>");
+    expect(instructions).toContain("Do not synthesize the plan yourself");
   });
 });
 
@@ -185,9 +199,13 @@ describe("roundtable prompt context", () => {
     expect(participant).toContain("--- app.ts ---");
     expect(participant).not.toContain("Pat: line 6");
     expect(participant).not.toContain("Architect: line 7\n");
-    const moderator = moderatorPrompt({ participants }, "Ship it", window);
-    expect(moderator).toContain("Select the participant");
-    expect(moderator).not.toContain("READY");
+    const moderator = moderatorPrompt(
+      { participants },
+      "Ship it",
+      window,
+      false,
+    );
+    expect(moderator).toContain("READY is not eligible");
     expect(moderator).not.toContain("--- app.ts ---");
   });
 
