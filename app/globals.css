@@ -1556,6 +1556,11 @@ select:focus-visible {
   color: var(--accent-ink);
   background: var(--accent);
 }
+.roundtable-control-actions button.synthesize:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--accent-ink);
+  transform: translateY(-1px);
+}
 .roundtable-control-actions button:disabled {
   opacity: 0.4;
   cursor: default;
@@ -2108,6 +2113,12 @@ select:focus-visible {
 .settings-form input[readonly] {
   color: var(--muted);
 }
+/* Masks the value like a password field without type="password", which
+   Chrome and other browsers key off to offer saving it as a login
+   credential. Falls back to plain text in browsers without this (Firefox). */
+.api-key-input {
+  -webkit-text-security: disc;
+}
 .settings-form label small {
   display: block;
   margin-top: 5px;
@@ -2198,6 +2209,13 @@ select:focus-visible {
   border-radius: 10px;
   background: var(--panel);
   padding: 8px 6px 8px 11px;
+}
+.mcp-row.unavailable {
+  border-style: dashed;
+  opacity: 0.55;
+}
+.mcp-row.unavailable label {
+  cursor: help;
 }
 .mcp-row label {
   flex: 1;

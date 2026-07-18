@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   eventErrorMessage,
   eventText,
+  eventTextItemId,
   finalResponseText,
   generatedFilesFromEvent,
   generatedFilesFromResponse,
@@ -38,6 +39,34 @@ describe("Responses API stream parsing", () => {
         output: [{ content: [{ type: "output_text", text: "done" }] }],
       }),
     ).toBe("done");
+  });
+
+  it("separates text from multiple output items with a paragraph break", () => {
+    expect(
+      outputTextFromJson({
+        output: [
+          { content: [{ type: "output_text", text: "first part" }] },
+          { type: "reasoning" },
+          { content: [{ type: "output_text", text: "second part" }] },
+        ],
+      }),
+    ).toBe("first part\n\nsecond part");
+    expect(outputTextFromJson({ output_text: ["first", "second"] })).toBe(
+      "first\n\nsecond",
+    );
+  });
+
+  it("reads the owning item id off text deltas only", () => {
+    expect(
+      eventTextItemId({
+        type: "response.output_text.delta",
+        item_id: "msg_1",
+        delta: "hi",
+      }),
+    ).toBe("msg_1");
+    expect(
+      eventTextItemId({ type: "response.output_item.done", item_id: "msg_1" }),
+    ).toBe("");
   });
 
   it("reads error messages from every location providers use", () => {
