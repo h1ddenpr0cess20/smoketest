@@ -400,7 +400,7 @@ select:focus-visible {
   top: 0;
   z-index: 10;
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) auto auto minmax(170px, 1fr);
+  grid-template-columns: minmax(150px, 1fr) auto minmax(170px, 1fr);
   align-items: center;
   gap: 14px;
   height: 68px;

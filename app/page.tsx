@@ -3355,6 +3355,22 @@ export default function Home() {
         </nav>
 
         <div className="provider-stack">
+          <div className="theme-switch" aria-label="Color theme">
+            <button
+              className={theme === "smoke" ? "active" : ""}
+              onClick={() => setTheme("smoke")}
+              title="Smoke light theme"
+            >
+              <span>○</span> Smoke
+            </button>
+            <button
+              className={theme === "ember" ? "active" : ""}
+              onClick={() => setTheme("ember")}
+              title="Ember dark theme"
+            >
+              <span>●</span> Ember
+            </button>
+          </div>
           <div className="sidebar-label">
             <span>PROVIDER</span>
             <span
@@ -3429,22 +3445,6 @@ export default function Home() {
                 {MODE_COPY[item].label}
               </button>
             ))}
-          </div>
-          <div className="theme-switch" aria-label="Color theme">
-            <button
-              className={theme === "smoke" ? "active" : ""}
-              onClick={() => setTheme("smoke")}
-              title="Smoke light theme"
-            >
-              <span>○</span> Smoke
-            </button>
-            <button
-              className={theme === "ember" ? "active" : ""}
-              onClick={() => setTheme("ember")}
-              title="Ember dark theme"
-            >
-              <span>●</span> Ember
-            </button>
           </div>
           <div className="topbar-right">
             <ExportMenu thread={activeThread} theme={theme} />
