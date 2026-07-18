@@ -2,6 +2,7 @@
 
 import { ChangeEvent, Children, FormEvent, isValidElement, KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import {
   eventErrorMessage,
@@ -14,18 +15,22 @@ import {
   toolActivity,
 } from "@/lib/stream";
 import { PROVIDERS, PROVIDER_IDS, type ProviderId } from "@/lib/providers";
-import { parseCommand } from "@/lib/commands";
+import { COMMANDS, parseCommand } from "@/lib/commands";
 import type { Attachment, McpServerEntry, Message, MessageVariant, Mode, ProviderSettings, Thread } from "@/lib/types";
 import { MCP_LABEL_PATTERN, TOOL_SUPPORT, isValidMcpUrl, type ToolRequest } from "@/lib/tools";
+import { buildReferenceBlock, buildRetrievalQuery, EMBEDDING_BATCH_SIZE, resolveEmbeddingModel } from "@/lib/rag";
 import {
-  buildReferenceBlock,
-  buildRetrievalQuery,
-  chunkText,
-  EMBEDDING_BATCH_SIZE,
-  rankChunks,
-  resolveEmbeddingModel,
-  type RagChunk,
-} from "@/lib/rag";
+  branchLocalDocIndex,
+  deleteLocalDocIndex,
+  getIndexedDocumentNames,
+  getLocalDocIndexStats,
+  indexDocuments,
+  restoreLocalDocIndex,
+  retrieveRelevantChunks,
+  type EmbedFn,
+} from "@/lib/localRag";
+import { extractDocumentText, isExtractableDocument } from "@/lib/parsers";
+import { getDocumentSourceName, shouldIgnoreDirectoryPath, type FileWithRelativePath } from "@/lib/docPaths";
 import { EXPORT_FORMATS, exportFilename, exportMime, renderExport, type ExportFormatKey } from "@/lib/export";
 
 const STORAGE = {
@@ -35,7 +40,17 @@ const STORAGE = {
   mode: "smoketest.mode.v1",
   theme: "smoketest.theme.v1",
   mcp: "smoketest.mcp.v1",
+  reasoning: "smoketest.reasoning.v1",
 } as const;
+
+// Attachment ingestion limits. Individual picks stay small; directory uploads
+// are wider but bounded so a dropped monorepo can't blow the localStorage
+// budget that threads (attachments included) are persisted under.
+const MAX_SINGLE_FILES = 16;
+const MAX_DIRECTORY_FILES = 120;
+const MAX_FILE_BYTES = 512_000;
+const MAX_EXTRACTED_CHARS = 200_000;
+const MAX_DIRECTORY_TOTAL_CHARS = 2_000_000;
 
 const MODE_COPY: Record<Mode, { label: string; mark: string; description: string; instructions: string }> = {
   ask: {
@@ -43,21 +58,21 @@ const MODE_COPY: Record<Mode, { label: string; mark: string; description: string
     mark: "?",
     description: "Understand code and explore options",
     instructions:
-      "You are smoketest, a precise senior software engineer. Answer questions about the supplied code and context. Be candid about uncertainty. Prefer concise explanations and concrete examples. Do not claim to have changed or executed files.",
+      "You are a precise senior software engineer named smoketest. Answer questions about the supplied code and context. Be candid about uncertainty. Prefer concise explanations and concrete examples. Do not claim to have changed or executed files.",
   },
   plan: {
     label: "Plan",
     mark: "◇",
     description: "Design a change before implementation",
     instructions:
-      "You are smoketest in planning mode. Analyze the request and supplied code, then propose an implementation plan. Include affected files, key decisions, risks, and validation. Do not implement the change yet. Call out missing context explicitly.",
+      "You are a software architect named smoketest, in planning mode. Analyze the request and supplied code, then return one recommended implementation plan with sections for Context, Approach, Critical files, Existing utilities to reuse, and Verification. Call out risks and missing context explicitly. Do not implement the change yet — the UI will ask the user to approve or revise the plan.",
   },
   build: {
     label: "Build",
     mark: "↗",
     description: "Produce implementation-ready changes",
     instructions:
-      "You are smoketest in build mode, a pragmatic coding assistant. Produce implementation-ready guidance and complete code or unified diffs where useful. Preserve the project's conventions, handle edge cases, and end with focused validation steps. Never claim you ran commands or modified files unless the user provided tool results proving it.",
+      "You are a pragmatic coding assistant named smoketest, in build mode. Produce implementation-ready guidance and complete code or unified diffs where useful. Preserve the project's conventions, handle edge cases, and end with focused validation steps. Never claim you ran commands or modified files unless the user provided tool results proving it.",
   },
 };
 
@@ -152,9 +167,13 @@ function restoreThreads(saved: unknown): Thread[] {
   return threads.length ? threads : [blankThread()];
 }
 
+// Session titles follow brainworm's makeConversationTitle: collapsed
+// whitespace, capped length, and a capitalized first letter.
 function shortTitle(value: string) {
   const clean = value.replace(/\s+/g, " ").trim();
-  return clean.length > 38 ? `${clean.slice(0, 38).trim()}…` : clean || "Untitled session";
+  if (!clean) return "Untitled session";
+  const title = clean.length > 38 ? `${clean.slice(0, 38).trimEnd()}…` : clean;
+  return title.charAt(0).toUpperCase() + title.slice(1);
 }
 
 function timeLabel(timestamp: number) {
@@ -201,21 +220,6 @@ async function copyText(text: string) {
   }
 }
 
-// Local RAG index, per thread and in-memory (darkwords' model): rebuilt
-// lazily from the attachments persisted on a thread's messages, so a reload
-// re-indexes on the next send instead of persisting vectors.
-type ThreadRagIndex = { chunks: RagChunk[]; seen: Set<string> };
-const ragIndexes = new Map<string, ThreadRagIndex>();
-
-function getRagIndex(threadId: string): ThreadRagIndex {
-  let index = ragIndexes.get(threadId);
-  if (!index) {
-    index = { chunks: [], seen: new Set() };
-    ragIndexes.set(threadId, index);
-  }
-  return index;
-}
-
 // Batched embeddings through the same-origin proxy, with wordmark's response
 // validation (order, dimensionality, finiteness).
 async function fetchEmbeddings(
@@ -260,6 +264,53 @@ async function fetchEmbeddings(
     vectors.push(...ordered.map((row) => row.embedding));
   }
   return vectors;
+}
+
+// Binds the proxy embedding call to a provider/key/model so lib/localRag can
+// stay transport-agnostic (wordmark passes the fetch through the same shape).
+function makeEmbed(provider: ProviderId, apiKey: string, model: string): EmbedFn {
+  return (texts, signal) => fetchEmbeddings(provider, apiKey, texts, model, signal);
+}
+
+// Recursively collects Files from a dropped FileSystemEntry tree, tagging each
+// with its relative path (ported from wordmark's attachmentDragDrop).
+function readAllFilesFromEntry(entry: FileSystemEntry, path = ""): Promise<File[]> {
+  return new Promise((resolve) => {
+    try {
+      if (entry.isFile) {
+        (entry as FileSystemFileEntry).file(
+          (file: FileWithRelativePath) => {
+            file._relativePath = path + file.name;
+            resolve([file]);
+          },
+          () => resolve([]),
+        );
+      } else if (entry.isDirectory) {
+        const reader = (entry as FileSystemDirectoryEntry).createReader();
+        const entries: FileSystemEntry[] = [];
+        const readBatch = () => {
+          reader.readEntries(
+            (batch: FileSystemEntry[]) => {
+              if (!batch || batch.length === 0) {
+                Promise.all(entries.map((child) => readAllFilesFromEntry(child, `${path}${entry.name}/`)))
+                  .then((results) => resolve(results.flat()))
+                  .catch(() => resolve([]));
+              } else {
+                entries.push(...batch);
+                readBatch();
+              }
+            },
+            () => resolve([]),
+          );
+        };
+        readBatch();
+      } else {
+        resolve([]);
+      }
+    } catch {
+      resolve([]);
+    }
+  });
 }
 
 type StreamPayload = {
@@ -363,7 +414,7 @@ async function streamAssistant(
   }
 }
 
-function Icon({ name, size = 18 }: { name: "plus" | "settings" | "paperclip" | "send" | "stop" | "menu" | "trash" | "refresh" | "close" | "copy" | "branch" | "download"; size?: number }) {
+function Icon({ name, size = 18 }: { name: "plus" | "settings" | "paperclip" | "send" | "stop" | "menu" | "trash" | "refresh" | "close" | "copy" | "branch" | "download" | "folder"; size?: number }) {
   const paths: Record<typeof name, React.ReactNode> = {
     plus: <><path d="M12 5v14M5 12h14" /></>,
     settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></>,
@@ -377,6 +428,7 @@ function Icon({ name, size = 18 }: { name: "plus" | "settings" | "paperclip" | "
     copy: <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></>,
     branch: <><path d="M6 3v12" /><circle cx="18" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><path d="M18 9a9 9 0 0 1-9 9" /></>,
     download: <><path d="M12 3v11" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>,
+    folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h9a1.5 1.5 0 0 1 1.5 1.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />,
   };
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
@@ -492,6 +544,7 @@ const MessageView = memo(function MessageView({
   message,
   fallbackProvider,
   busy,
+  isStreaming,
   onApprovePlan,
   onRevisePlan,
   onRegenerate,
@@ -501,6 +554,7 @@ const MessageView = memo(function MessageView({
   message: Message;
   fallbackProvider: ProviderId;
   busy: boolean;
+  isStreaming: boolean;
   onApprovePlan: (messageId: string) => void;
   onRevisePlan: (messageId: string) => void;
   onRegenerate: (messageId: string) => void;
@@ -529,7 +583,7 @@ const MessageView = memo(function MessageView({
           {message.role === "assistant" && <><span>·</span><span>{message.model}</span></>}
         </div>
         {message.attachments?.length ? (
-          <div className="message-files">{message.attachments.map((file) => <span key={file.id}>⌘ {file.name}</span>)}</div>
+          <div className="message-files">{message.attachments.map((file) => <span key={file.id}>@{file.name}</span>)}</div>
         ) : null}
         {message.toolActivity?.length ? (
           <div className="tool-activity" aria-label="Tool activity">
@@ -537,11 +591,31 @@ const MessageView = memo(function MessageView({
           </div>
         ) : null}
         {message.content ? (
-          <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: CodeBlock }}>{message.content}</ReactMarkdown></div>
+          <div className="markdown">
+            {message.role === "assistant" ? (
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeHighlight]}
+                components={{
+                  pre: CodeBlock,
+                  a: ({ children, ...props }) => (
+                    <a {...props} target="_blank" rel="noreferrer">
+                      {children}
+                    </a>
+                  ),
+                }}
+              >
+                {message.content}
+              </ReactMarkdown>
+            ) : (
+              <p className="user-text">{message.content}</p>
+            )}
+            {isStreaming && <span className="stream-cursor" aria-label="Writing" />}
+          </div>
         ) : (
           <div className="thinking"><span /><span /><span /><small>reading the smoke</small></div>
         )}
-        {message.content ? (
+        {message.content && !isStreaming ? (
           <div className="message-actions">
             <button onClick={() => void copy()} aria-label="Copy message"><Icon name="copy" size={13} /> {copied ? "Copied" : "Copy"}</button>
             {message.role === "assistant" && (
@@ -595,9 +669,16 @@ export default function Home() {
   const [modelsRefresh, setModelsRefresh] = useState(0);
   const [mcpServers, setMcpServers] = useState<McpServerEntry[]>([]);
   const [mcpDraft, setMcpDraft] = useState({ label: "", url: "" });
+  // Attachment status lines are keyed by thread so switching sessions shows
+  // only the active thread's status without an effect-driven reset.
+  const [attachNote, setAttachNote] = useState<{ threadId: string; text: string } | null>(null);
+  const [ragStatus, setRagStatus] = useState<{ threadId: string; text: string } | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [streamingId, setStreamingId] = useState("");
   const discoverSeq = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const dirRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -620,6 +701,7 @@ export default function Home() {
     let restoredProvider: ProviderId | null = null;
     let restoredMode: Mode | null = null;
     let restoredTheme: "smoke" | "ember" | null = null;
+    let restoredReasoning: string | null = null;
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE.settings) || "null") as unknown;
       if (saved) restoredSettings = restoreSettings(saved);
@@ -629,6 +711,8 @@ export default function Home() {
       if (savedMode && ["ask", "plan", "build"].includes(savedMode)) restoredMode = savedMode as Mode;
       const savedTheme = localStorage.getItem(STORAGE.theme);
       if (savedTheme === "smoke" || savedTheme === "ember") restoredTheme = savedTheme;
+      const savedReasoning = localStorage.getItem(STORAGE.reasoning);
+      if (savedReasoning && ["low", "medium", "high"].includes(savedReasoning)) restoredReasoning = savedReasoning;
     } catch {
       // Invalid local state falls back to defaults.
     }
@@ -644,6 +728,7 @@ export default function Home() {
       if (restoredProvider) setProvider(restoredProvider);
       if (restoredMode) setMode(restoredMode);
       if (restoredTheme) setTheme(restoredTheme);
+      if (restoredReasoning) setReasoning(restoredReasoning);
       setMcpServers(restoredMcp);
       setThreads(restoredThreads);
       setActiveId(restoredThreads[0].id);
@@ -674,10 +759,11 @@ export default function Home() {
       localStorage.setItem(STORAGE.mode, mode);
       localStorage.setItem(STORAGE.theme, theme);
       localStorage.setItem(STORAGE.mcp, JSON.stringify(mcpServers));
+      localStorage.setItem(STORAGE.reasoning, reasoning);
     } catch {
       // Storage unavailable — settings stay in memory for this session.
     }
-  }, [settings, provider, mode, theme, mcpServers, hydrated]);
+  }, [settings, provider, mode, theme, mcpServers, reasoning, hydrated]);
 
   // Auto-scroll only while the reader is already near the bottom; scrolling up
   // to reread must not be fought by the stream (wordmark's shouldAutoScroll).
@@ -698,6 +784,9 @@ export default function Home() {
   useEffect(() => {
     // Switching threads always starts pinned to the newest message.
     autoScrollRef.current = true;
+    // Prefetch the thread's persisted document index so the first send doesn't
+    // wait on IndexedDB.
+    if (activeId) void restoreLocalDocIndex(activeId).catch(() => 0);
   }, [activeId]);
 
   useEffect(() => {
@@ -723,7 +812,7 @@ export default function Home() {
 
   function deleteThread(threadId: string) {
     if (streaming) return;
-    ragIndexes.delete(threadId);
+    void deleteLocalDocIndex(threadId);
     const next = threads.filter((thread) => thread.id !== threadId);
     if (!next.length) {
       const replacement = blankThread();
@@ -804,15 +893,118 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, [provider, currentApiKey, hydrated, modelsRefresh]);
 
-  async function onFiles(event: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files ?? []);
+  // Extracts text from picked or dropped files into composer attachments and —
+  // for local providers with RAG enabled — indexes them into the thread's
+  // vector index right away (wordmark's attach-time indexing), so send time
+  // only needs the query embedding.
+  async function ingestFiles(files: File[], fromDirectory: boolean) {
+    if (!files.length || !activeThread) return;
+    const threadId = activeThread.id;
+    const limit = fromDirectory ? MAX_DIRECTORY_FILES : MAX_SINGLE_FILES;
     const next: Attachment[] = [];
-    for (const file of files.slice(0, 8 - attachments.length)) {
-      if (file.size > 200_000) continue;
-      next.push({ id: id(), name: file.name, size: file.size, content: await file.text() });
+    let skipped = 0;
+    let totalChars = 0;
+    for (const file of files) {
+      if (attachments.length + next.length >= limit) {
+        skipped++;
+        continue;
+      }
+      const name = getDocumentSourceName(file);
+      // Dependency/VCS noise is silently dropped for directory uploads only.
+      if (fromDirectory && shouldIgnoreDirectoryPath(name)) continue;
+      if (file.size > MAX_FILE_BYTES || !isExtractableDocument(name)) {
+        skipped++;
+        continue;
+      }
+      try {
+        let text = await extractDocumentText(file);
+        if (!text.trim()) {
+          skipped++;
+          continue;
+        }
+        if (text.length > MAX_EXTRACTED_CHARS) text = text.slice(0, MAX_EXTRACTED_CHARS);
+        if (fromDirectory && totalChars + text.length > MAX_DIRECTORY_TOTAL_CHARS) {
+          skipped++;
+          continue;
+        }
+        totalChars += text.length;
+        next.push({ id: id(), name, size: file.size, content: text });
+      } catch {
+        skipped++;
+      }
     }
-    setAttachments((current) => [...current, ...next].slice(0, 8));
+
+    if (next.length) {
+      // Re-attaching a path replaces its previous composer entry.
+      const replaced = new Set(next.map((file) => file.name));
+      setAttachments((current) => [...current.filter((file) => !replaced.has(file.name)), ...next]);
+    }
+    setAttachNote(
+      skipped
+        ? { threadId, text: `${next.length} attached · ${skipped} skipped (unsupported, too large, or over budget)` }
+        : null,
+    );
+
+    if (next.length && currentProvider.local && currentSettings.localRag) {
+      const embeddingModel = resolveEmbeddingModel(currentSettings.embeddingModel, models);
+      if (!embeddingModel) return;
+      setRagStatus({ threadId, text: `Indexing ${next.length} file${next.length === 1 ? "" : "s"}…` });
+      try {
+        const result = await indexDocuments(
+          threadId,
+          next.map((file) => ({ name: file.name, text: file.content })),
+          embeddingModel,
+          makeEmbed(provider, currentSettings.apiKey, embeddingModel),
+        );
+        const stats = getLocalDocIndexStats(threadId);
+        setRagStatus({
+          threadId,
+          text:
+            `Indexed ${stats.documents} file${stats.documents === 1 ? "" : "s"} · ${stats.chunks} chunks` +
+            (result.cached ? ` · ${result.cached} from cache` : ""),
+        });
+      } catch (error) {
+        setRagStatus({
+          threadId,
+          text: error instanceof Error ? `Indexing failed: ${error.message}` : "Indexing failed.",
+        });
+      }
+    }
+  }
+
+  async function onFiles(event: ChangeEvent<HTMLInputElement>, fromDirectory = false) {
+    const files = Array.from(event.target.files ?? []);
     event.target.value = "";
+    await ingestFiles(files, fromDirectory);
+  }
+
+  // Folder-aware drop: directory entries are walked recursively with their
+  // relative paths preserved (wordmark's attachmentDragDrop).
+  async function onComposerDrop(event: React.DragEvent) {
+    event.preventDefault();
+    setDragOver(false);
+    const items = event.dataTransfer?.items;
+    let files: File[] = [];
+    let sawDirectory = false;
+    if (items?.length) {
+      // Entries must be captured synchronously before the first await.
+      const collected = [...items]
+        .filter((item) => item.kind === "file")
+        .map((item) => {
+          const entry = item.webkitGetAsEntry?.();
+          if (entry) {
+            if (entry.isDirectory) sawDirectory = true;
+            return readAllFilesFromEntry(entry);
+          }
+          const file = item.getAsFile();
+          return Promise.resolve(file ? [file] : []);
+        });
+      files = (await Promise.all(collected)).flat();
+    } else {
+      files = Array.from(event.dataTransfer?.files ?? []);
+    }
+    const fromDirectory = sawDirectory || files.some((file) => getDocumentSourceName(file).includes("/"));
+    await ingestFiles(files, fromDirectory);
   }
 
   function patchMessage(threadId: string, messageId: string, patch: Partial<Message>) {
@@ -860,8 +1052,26 @@ export default function Home() {
         setDraft("");
         return;
       }
+      if (command.type === "mcp") {
+        setSettingsOpen(true);
+        setDraft("");
+        return;
+      }
+      if (command.type === "search") {
+        if (!TOOL_SUPPORT[provider].webSearch) {
+          appendNotice(`${currentProvider.name} has no provider-managed web search.`);
+        } else {
+          const enabled = command.enabled ?? !currentSettings.webSearch;
+          updateProviderSettings({ webSearch: enabled });
+          appendNotice(`Web search ${enabled ? "enabled" : "disabled"}.`);
+        }
+        setDraft("");
+        return;
+      }
       if (command.type === "unknown") {
-        appendNotice(`Unknown command \`${command.command}\`. Available: /ask, /plan, /build, /new, /effort low|medium|high.`);
+        appendNotice(
+          `Unknown command \`${command.command}\`. Available: ${COMMANDS.map((item) => item.command).join(", ")}.`,
+        );
         setDraft("");
         return;
       }
@@ -916,14 +1126,17 @@ export default function Home() {
     );
     setDraft("");
     setAttachments([]);
+    setAttachNote(null);
     setStreaming(true);
+    setStreamingId(assistantId);
     autoScrollRef.current = true;
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      // Local RAG (from wordmark/darkwords): for local providers, index the
-      // thread's attachments client-side and send only retrieved excerpts;
-      // any failure falls back to inlining the files as before.
+      // Local RAG (full wordmark port): for local providers the thread's
+      // attachments live in a persistent per-thread vector index; only the
+      // passages relevant to this question are sent. Any failure falls back to
+      // inlining the files as before.
       let requestInput = buildInput(priorMessages, prompt, pendingAttachments);
       let ragLabels: string[] = [];
       if (currentProvider.local && currentSettings.localRag) {
@@ -934,57 +1147,34 @@ export default function Home() {
         ];
         if (embeddingModel && threadAttachments.length) {
           try {
-            const index = getRagIndex(threadId);
-            const fresh = threadAttachments.filter((file) => !index.seen.has(file.id));
-            if (fresh.length) {
-              const pendingChunks = fresh.flatMap((file) =>
-                chunkText(file.content).map((text) => ({ name: file.name, text })),
-              );
-              if (pendingChunks.length) {
-                const vectors = await fetchEmbeddings(
-                  provider,
-                  currentSettings.apiKey,
-                  pendingChunks.map((chunk) => chunk.text),
-                  embeddingModel,
-                  controller.signal,
-                );
-                const replaced = new Set(pendingChunks.map((chunk) => chunk.name));
-                index.chunks = index.chunks.filter((chunk) => !replaced.has(chunk.name));
-                pendingChunks.forEach((chunk, i) => {
-                  index.chunks.push({ ...chunk, vector: vectors[i], model: embeddingModel });
-                });
+            const embed = makeEmbed(provider, currentSettings.apiKey, embeddingModel);
+            await restoreLocalDocIndex(threadId);
+            // Attachments the index doesn't know yet (attach-time indexing was
+            // off or unavailable, a reload on another browser, older threads)
+            // are indexed from their stored text before retrieval.
+            const indexedNames = new Set(getIndexedDocumentNames(threadId));
+            const missingByName = new Map<string, { name: string; text: string }>();
+            for (const file of threadAttachments) {
+              if (!indexedNames.has(file.name) && file.content.trim()) {
+                missingByName.set(file.name, { name: file.name, text: file.content });
               }
-              for (const file of fresh) index.seen.add(file.id);
             }
-            // Chunks embedded with a different model are re-embedded in place.
-            const stale = index.chunks.filter((chunk) => chunk.model !== embeddingModel);
-            if (stale.length) {
-              const vectors = await fetchEmbeddings(
-                provider,
-                currentSettings.apiKey,
-                stale.map((chunk) => chunk.text),
-                embeddingModel,
-                controller.signal,
-              );
-              stale.forEach((chunk, i) => {
-                chunk.vector = vectors[i];
-                chunk.model = embeddingModel;
-              });
+            if (missingByName.size) {
+              await indexDocuments(threadId, [...missingByName.values()], embeddingModel, embed, controller.signal);
             }
-            if (index.chunks.length) {
+            if (getLocalDocIndexStats(threadId).chunks) {
               const priorUserTexts = priorMessages
                 .filter((message) => message.role === "user")
                 .map((message) => message.content);
               const query = buildRetrievalQuery(priorUserTexts, prompt);
-              const [queryVector] = await fetchEmbeddings(
-                provider,
-                currentSettings.apiKey,
-                [query],
+              const retrieved = await retrieveRelevantChunks(
+                threadId,
+                query,
                 embeddingModel,
+                embed,
                 controller.signal,
               );
-              const retrieved = rankChunks(index.chunks, queryVector, query);
-              const names = [...new Set(index.chunks.map((chunk) => chunk.name))].sort();
+              const names = getIndexedDocumentNames(threadId);
               const block = buildReferenceBlock(retrieved, names, prompt);
               if (block) {
                 requestInput = buildInput(priorMessages, `${prompt}${block}`, []);
@@ -1037,6 +1227,7 @@ export default function Home() {
       }
     } finally {
       setStreaming(false);
+      setStreamingId("");
       abortRef.current = null;
     }
   }
@@ -1069,6 +1260,7 @@ export default function Home() {
 
     patchMessage(threadId, messageId, { content: "", error: false, planState: undefined, toolActivity: [] });
     setStreaming(true);
+    setStreamingId(messageId);
     const controller = new AbortController();
     abortRef.current = controller;
     try {
@@ -1113,6 +1305,7 @@ export default function Home() {
       }
     } finally {
       setStreaming(false);
+      setStreamingId("");
       abortRef.current = null;
     }
   }
@@ -1150,6 +1343,9 @@ export default function Home() {
         variants: message.variants?.map((variant) => ({ ...variant })),
       })),
     };
+    // The branch keeps retrieval working without re-embedding: the document
+    // index is copied under the new thread id (cache references and all).
+    void branchLocalDocIndex(activeThread.id, branch.id);
     setThreads((current) => [branch, ...current]);
     setActiveId(branch.id);
     setSidebarOpen(false);
@@ -1164,6 +1360,7 @@ export default function Home() {
     regenerate: (messageId: string) => void;
     branch: (messageId: string) => void;
     selectVariant: (messageId: string, index: number) => void;
+    runCommand: (command: string) => void;
   };
   const messageActionsRef = useRef<MessageActions>({
     approve: () => {},
@@ -1171,6 +1368,7 @@ export default function Home() {
     regenerate: () => {},
     branch: () => {},
     selectVariant: () => {},
+    runCommand: () => {},
   });
   const messageActions: MessageActions = {
     approve: (messageId) => {
@@ -1189,6 +1387,7 @@ export default function Home() {
     regenerate: (messageId) => void regenerate(messageId),
     branch: branchThread,
     selectVariant,
+    runCommand: (command) => void submit(command),
   };
   useEffect(() => {
     messageActionsRef.current = messageActions;
@@ -1208,10 +1407,32 @@ export default function Home() {
   }
 
   function onComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
+    // The isComposing guard keeps Enter from sending mid-IME-composition.
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       void submit();
     }
+  }
+
+  // Brainworm's composer command menu: typing "/" surfaces the commands, and a
+  // click either runs the bare command or seeds the draft for arguments.
+  const commandMatches = useMemo(() => {
+    const match = /^\/[a-z-]*$/i.exec(draft.trim());
+    if (!match) return [];
+    const prefix = match[0].toLowerCase();
+    return COMMANDS.filter((item) => item.command.startsWith(prefix));
+  }, [draft]);
+
+  function pickCommand(command: string) {
+    // Bare commands run immediately; ones that take arguments seed the draft.
+    // Routed through the actions ref (like the message actions) so the lint
+    // analyzer doesn't conflate submit with render-time work.
+    if (command === "/new" || command === "/mcp") {
+      messageActionsRef.current.runCommand(command);
+      return;
+    }
+    setDraft(`${command} `);
+    textareaRef.current?.focus();
   }
 
   const canSend = Boolean(draft.trim() && currentSettings.model.trim() && !streaming);
@@ -1320,6 +1541,7 @@ export default function Home() {
                   message={message}
                   fallbackProvider={provider}
                   busy={streaming}
+                  isStreaming={streamingId === message.id}
                   onApprovePlan={approvePlan}
                   onRevisePlan={revisePlan}
                   onRegenerate={regenerateMessage}
@@ -1333,14 +1555,44 @@ export default function Home() {
         </div>
 
         <div className="composer-zone">
-          {attachments.length > 0 && (
-            <div className="attachment-strip">
-              {attachments.map((file) => (
-                <span key={file.id}>⌘ {file.name}<button onClick={() => setAttachments((current) => current.filter((item) => item.id !== file.id))} aria-label={`Remove ${file.name}`}>×</button></span>
-              ))}
-            </div>
-          )}
-          <form className="composer" onSubmit={onSubmit}>
+          <form
+            className={`composer ${dragOver ? "drag-over" : ""}`}
+            onSubmit={onSubmit}
+            onDragOver={(event) => {
+              event.preventDefault();
+              if (event.dataTransfer?.types.includes("Files")) setDragOver(true);
+            }}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(false);
+            }}
+            onDrop={(event) => void onComposerDrop(event)}
+          >
+            {commandMatches.length > 0 && (
+              <div className="command-menu" role="menu" aria-label="Commands">
+                {commandMatches.map((item) => (
+                  <button key={item.command} type="button" role="menuitem" onClick={() => pickCommand(item.command)}>
+                    <code>{item.command}</code>
+                    <span>{item.hint}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {attachments.length > 0 && (
+              <div className="composer-files">
+                {attachments.map((file) => (
+                  <span key={file.id} title={file.name}>
+                    @{file.name}
+                    <button
+                      type="button"
+                      onClick={() => setAttachments((current) => current.filter((item) => item.id !== file.id))}
+                      aria-label={`Remove ${file.name}`}
+                    >
+                      <Icon name="close" size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <textarea
               ref={textareaRef}
               value={draft}
@@ -1350,20 +1602,40 @@ export default function Home() {
               rows={1}
               aria-label="Message"
             />
-            <div className="composer-actions">
-              <div>
-                <input ref={fileRef} type="file" multiple hidden onChange={(event) => void onFiles(event)} />
-                <button type="button" className="attach-button" onClick={() => fileRef.current?.click()} title="Attach code files"><Icon name="paperclip" size={17} /> Attach</button>
-                <span className="context-note">8 files · 200 KB each</span>
-              </div>
+            <div className="composer-footer">
+              <span className="composer-hint">
+                {(ragStatus?.threadId === activeThread?.id && ragStatus?.text) ||
+                  (attachNote?.threadId === activeThread?.id && attachNote?.text) ||
+                  `${MODE_COPY[mode].label} mode · ${MODE_COPY[mode].description}`}
+              </span>
+              <input ref={fileRef} type="file" multiple hidden onChange={(event) => void onFiles(event)} />
+              <input
+                ref={dirRef}
+                type="file"
+                hidden
+                onChange={(event) => void onFiles(event, true)}
+                {...({ webkitdirectory: "" } as Record<string, string>)}
+              />
+              <button type="button" className="composer-icon" onClick={() => fileRef.current?.click()} title="Attach files" aria-label="Attach files">
+                <Icon name="paperclip" size={17} />
+              </button>
+              <button type="button" className="composer-icon" onClick={() => dirRef.current?.click()} title="Attach a folder" aria-label="Attach a folder">
+                <Icon name="folder" size={17} />
+              </button>
               {streaming ? (
-                <button type="button" className="send-button stop" onClick={() => abortRef.current?.abort()}><Icon name="stop" size={15} /> Stop</button>
+                <button type="button" className="composer-send is-stop" onClick={() => abortRef.current?.abort()} title="Stop generating" aria-label="Stop generating">
+                  <Icon name="stop" size={16} />
+                </button>
               ) : (
-                <button className="send-button" disabled={!canSend}><span>Send</span><Icon name="send" size={15} /></button>
+                <button className="composer-send" disabled={!canSend} title="Send" aria-label="Send">
+                  <Icon name="send" size={17} />
+                </button>
               )}
             </div>
           </form>
-          <p className="composer-foot">Commands: /ask · /plan · /build · /new · /effort — keys and sessions stay in this browser.</p>
+          <p className="composer-foot">
+            Commands: {COMMANDS.map((item) => item.command).join(" · ")} — drop files or folders on the composer. Keys and sessions stay in this browser.
+          </p>
         </div>
       </section>
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCommand } from "../lib/commands";
+import { COMMANDS, parseCommand } from "../lib/commands";
 
 describe("composer commands", () => {
   it("ignores plain messages", () => {
@@ -32,5 +32,24 @@ describe("composer commands", () => {
 
   it("flags unknown commands", () => {
     expect(parseCommand("/wat now")).toEqual({ type: "unknown", command: "/wat" });
+  });
+
+  it("parses /mcp", () => {
+    expect(parseCommand("/mcp")).toEqual({ type: "mcp" });
+  });
+
+  it("parses /search on, off, and bare toggle", () => {
+    expect(parseCommand("/search on")).toEqual({ type: "search", enabled: true });
+    expect(parseCommand("/search off")).toEqual({ type: "search", enabled: false });
+    expect(parseCommand("/search")).toEqual({ type: "search", enabled: null });
+    expect(parseCommand("/search maybe")).toEqual({ type: "search", enabled: null });
+  });
+
+  it("keeps the command menu list in sync with the parser", () => {
+    for (const item of COMMANDS) {
+      const parsed = parseCommand(item.command);
+      expect(parsed, item.command).not.toBeNull();
+      expect(parsed?.type, item.command).not.toBe("unknown");
+    }
   });
 });
