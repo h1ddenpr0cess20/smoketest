@@ -559,6 +559,11 @@ select:focus-visible {
 }
 
 .plan-style-bar {
+  /* Pinned just under the sticky topbar so the Solo/Roundtable choice stays
+     reachable while scrolling a long plan thread. */
+  position: sticky;
+  top: 68px;
+  z-index: 9;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2463,6 +2468,7 @@ select:focus-visible {
     padding: 0 10px 10px;
   }
   .plan-style-bar {
+    top: 60px;
     min-height: 38px;
   }
   .roundtable-setup {
