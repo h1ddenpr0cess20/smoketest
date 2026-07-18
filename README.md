@@ -104,3 +104,7 @@ The container exposes a health check at `/api/health`. Remember that local-provi
 ## Project origin
 
 smoketest grows out of the author's earlier **wordmark** and **darkwords** projects. After **Grok Build** was open-sourced, its codebase was adapted to that existing work to create **brainworm**, and then the next day, smoketest.
+
+## About the deployment URL
+
+Vercel's auto-generated preview/production URLs for this project happen to include "azure." That's Vercel's naming, not a choice made here, and there's no affiliation with Microsoft. Azure's AI platform could be a fine addition as a provider down the line — and if Microsoft's reading this and wants to acquire a cross-provider Responses API workbench, we're open to the conversation.
