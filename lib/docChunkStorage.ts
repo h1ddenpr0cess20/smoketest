@@ -10,7 +10,9 @@ const CHUNK_DB_NAME = "smoketest-doc-chunks";
 const CHUNK_DB_VERSION = 1;
 const CHUNK_STORE_NAME = "chunks";
 const FILE_CACHE_STORE_NAME = "fileCache";
-const FILE_CACHE_LIMIT = 50;
+// Sized for directory uploads: one entry per file, and eviction never touches
+// entries referenced by a thread record.
+const FILE_CACHE_LIMIT = 500;
 
 /** One persisted retrieval chunk: source path, text, and its embedding. */
 export interface StoredDocChunk {

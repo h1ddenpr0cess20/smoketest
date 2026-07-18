@@ -238,6 +238,13 @@ export async function indexDocuments(
       }
     }
 
+    // The thread record must be persisted BEFORE the cache entries: its
+    // references are what protect them from eviction. In the old order a
+    // directory upload larger than the cache limit evicted its own earlier
+    // entries save by save, and the record then pointed at missing keys —
+    // the index looked whole until a reload gutted it.
+    await persistLocalDocIndex(threadId);
+    let cacheWriteFailed = false;
     for (const [cacheKey, chunks] of byCacheKey) {
       try {
         await saveCachedFileChunks(cacheKey, chunks[0].name, chunks);
@@ -248,10 +255,10 @@ export async function indexDocuments(
         for (const chunk of index.chunks) {
           if (chunk.cacheKey === cacheKey) chunk.cacheKey = null;
         }
+        cacheWriteFailed = true;
       }
     }
-
-    await persistLocalDocIndex(threadId);
+    if (cacheWriteFailed) await persistLocalDocIndex(threadId);
     return { indexed, chunks: cachedChunks + pending.length, cached: cachedFiles, failed };
   } catch (error) {
     index.chunks = originalChunks;
@@ -295,15 +302,20 @@ async function reembedIndex(
         }
       }
     }
+    // Same ordering rule as indexDocuments: the record's references guard
+    // the cache entries from eviction, so it goes first.
+    await persistLocalDocIndex(threadId);
+    let cacheWriteFailed = false;
     for (const [cacheKey, chunks] of byCacheKey) {
       try {
         await saveCachedFileChunks(cacheKey, chunks[0].name, chunks);
       } catch (error) {
         console.error("Failed to cache re-embedded chunks:", error);
         for (const chunk of chunks) chunk.cacheKey = null;
+        cacheWriteFailed = true;
       }
     }
-    await persistLocalDocIndex(threadId);
+    if (cacheWriteFailed) await persistLocalDocIndex(threadId);
     return [...index.chunks];
   } catch (error) {
     console.error("Failed to re-embed document index:", error);

@@ -1222,18 +1222,24 @@ export default function Home() {
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      // Local RAG (full wordmark port): for local providers the thread's
-      // attachments live in a persistent per-thread vector index; only the
-      // passages relevant to this question are sent. Any failure falls back to
-      // inlining the files as before.
-      let requestInput = buildInput(priorMessages, prompt, pendingAttachments);
+      // History carries only prompts, so every send re-inlines the thread's
+      // attachments (deduped by path, latest version wins) into the current
+      // turn — otherwise any turn after the first loses file access on every
+      // provider. Local RAG replaces this inline block with retrieved
+      // passages when it succeeds.
+      const threadAttachments = [
+        ...priorMessages.flatMap((message) => message.attachments ?? []),
+        ...pendingAttachments,
+      ];
+      const attachmentByName = new Map<string, Attachment>();
+      for (const file of threadAttachments) {
+        if (file.content.trim()) attachmentByName.set(file.name, file);
+      }
+      const inlineAttachments = [...attachmentByName.values()];
+      let requestInput = buildInput(priorMessages, prompt, inlineAttachments);
       let ragLabels: string[] = [];
       if (currentProvider.local && currentSettings.localRag) {
         const embeddingModel = resolveEmbeddingModel(currentSettings.embeddingModel, models);
-        const threadAttachments = [
-          ...priorMessages.flatMap((message) => message.attachments ?? []),
-          ...pendingAttachments,
-        ];
         if (embeddingModel && threadAttachments.length) {
           try {
             const embed = makeEmbed(provider, currentSettings.apiKey, embeddingModel);
@@ -1289,12 +1295,16 @@ export default function Home() {
                 ragLabels = [`Local RAG: ${retrieved.length} chunks · ${names.length} file${names.length === 1 ? "" : "s"}`];
               }
             }
-          } catch {
+          } catch (error) {
             if (controller.signal.aborted) {
               patchMessage(threadId, assistantId, { content: "Generation stopped.", planState: undefined });
               return;
             }
             // Retrieval is best-effort; the inline-attachment input stands.
+            // Failures surface as a label instead of vanishing silently.
+            ragLabels = [
+              `Local RAG failed (${error instanceof Error ? error.message : "retrieval error"}) — sent inline file text instead`,
+            ];
           }
         }
       }
@@ -1358,7 +1368,26 @@ export default function Home() {
       setSettingsOpen(true);
       return;
     }
-    const input = toInputMessages(activeThread.messages.slice(0, index));
+    // Rebuild the request the way submit() would have: history carries bare
+    // prompts, so the thread's attachments are re-inlined into the last user
+    // turn — without this, regenerating loses file access on every provider.
+    const prior = activeThread.messages.slice(0, index);
+    const lastUserIndex = prior.findLastIndex((message) => message.role === "user" && !message.error);
+    const attachmentByName = new Map<string, Attachment>();
+    for (const message of prior) {
+      for (const file of message.attachments ?? []) {
+        if (file.content.trim()) attachmentByName.set(file.name, file);
+      }
+    }
+    const input =
+      lastUserIndex >= 0
+        ? [
+            ...buildInput(prior.slice(0, lastUserIndex), prior[lastUserIndex].content, [
+              ...attachmentByName.values(),
+            ]),
+            ...toInputMessages(prior.slice(lastUserIndex + 1)),
+          ]
+        : toInputMessages(prior);
     if (!input.length) return;
 
     const snapshot: MessageVariant = {
