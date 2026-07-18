@@ -16,6 +16,7 @@ export default defineConfig({
         "lib/docPaths.ts",
         "lib/downloads.ts",
         "lib/export.ts",
+        "lib/messageQueue.ts",
         "lib/providers.ts",
         "lib/rag.ts",
         "lib/roundtable/index.ts",

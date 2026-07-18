@@ -24,6 +24,7 @@ There are no Chat Completions adapters and no provider SDKs. The app sends the s
 
 - Ask, Plan, and Build coding modes
 - Streaming Responses API output
+- FIFO follow-up message queue while a response is streaming
 - Switch providers while keeping the conversation transcript, making it possible to plan with one model and execute with another
 - File and directory attachments as inline context, with browser-side parsing and local retrieval for larger document sets
 - OpenAI and xAI provider tools, including web search, Code Interpreter, file search, and remote MCP; xAI also exposes X search
