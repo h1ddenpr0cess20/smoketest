@@ -1,5 +1,33 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="16" fill="#101211"/>
-  <path d="M18 39c8 3 21 0 24-8 2-6-3-11-8-8-4 2-2 7 2 7 8 0 12-8 10-15" fill="none" stroke="#a8f0c6" stroke-width="4" stroke-linecap="round"/>
-  <circle cx="18" cy="39" r="4" fill="#f2d38b"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">smoketest</title>
+  <style>
+    .base { fill: #e5e2d8; }
+    .tree { fill: #1d2420; }
+    .smoke { fill: #858880; }
+    .ember { fill: #ad583f; }
+    @media (prefers-color-scheme: dark) {
+      .base { fill: #171a18; }
+      .tree { fill: #eeeae0; }
+      .smoke { fill: #666b66; }
+      .ember { fill: #d2764e; }
+    }
+  </style>
+  <rect class="base" width="64" height="64" rx="16"/>
+
+  <!-- A single, sculpted plume: quiet enough to read at favicon scale. -->
+  <path
+    class="smoke"
+    d="M39.5 55.5c9.7-.8 16.5-6.2 16.5-14.1 0-5.2-2.8-8.2-6.5-11.2-2.6-2.1-2.6-4.8-.5-7.4 3.2-4 2-9.8-2.8-14.3.5 5.2-1.8 8.4-5.8 10.5-4.8 2.5-6.4 6.4-4.2 10.3 1.5 2.7 4.8 4 5.8 7.1 1.3 4-1.4 7.5-5.2 9.3l2.7 9.8Z"
+  />
+
+  <!-- The pine stays deliberately broad and geometric, not illustrative. -->
+  <path
+    class="tree"
+    fill-rule="evenodd"
+    d="m24.2 10-8.3 15h4.6L13 37.2h5.2L9 51.5h12.2V57h6v-5.5h12.2l-9.2-14.3h5.2L28 25h4.5L24.2 10Z"
+    clip-rule="evenodd"
+  />
+
+  <!-- One ember-colored ground stroke is the only explicit fire cue. -->
+  <path class="ember" d="M9 51.5h30.4L36.5 56H9v-4.5Z"/>
 </svg>
