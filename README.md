@@ -26,7 +26,7 @@ There are no Chat Completions adapters and no provider SDKs. The app sends the s
 - Streaming Responses API output
 - Switch providers while keeping the conversation transcript, making it possible to plan with one model and execute with another
 - File and directory attachments as inline context, with browser-side parsing and local retrieval for larger document sets
-- OpenAI and xAI provider tools, including web search, Code Interpreter, file search, and remote MCP; xAI also exposes X search
+- Provider-managed tools: OpenAI and xAI web search, Code Interpreter, file search, and remote MCP; LM Studio remote MCP; xAI X search
 - Download buttons for provider-generated Code Interpreter files when the response contains usable file metadata
 - OpenAI **Fast mode**, which sends Priority processing (`service_tier: "priority"`) when enabled
 - Browser-local sessions, API keys, models, and preferences
@@ -47,7 +47,7 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000), choose a provider, and open **Provider settings**.
 
-For LM Studio, start the local server from the Developer tab. For Ollama, make sure Ollama is running and the model entered in settings is installed.
+For LM Studio, start the local server from the Developer tab. To use configured MCP servers, also enable **Allow per-request MCPs** under Developer → Settings. For Ollama, make sure Ollama is running and the model entered in settings is installed.
 
 ## Cross-provider planning and execution
 
