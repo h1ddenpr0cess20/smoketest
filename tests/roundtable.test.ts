@@ -12,6 +12,7 @@ import {
   parseModeratorDecision,
   participantPrompt,
   recordModeratorFailure,
+  recordModeratorSuccess,
   recordParticipantTurn,
   shouldPauseAfterModeratorFailure,
 } from "../lib/roundtable";
@@ -104,8 +105,9 @@ describe("roundtable moderator routing", () => {
     progress = recordModeratorFailure(progress);
     expect(shouldPauseAfterModeratorFailure(progress)).toBe(true);
     expect(recordParticipantTurn(progress, "architect").moderatorFailures).toBe(
-      0,
+      3,
     );
+    expect(recordModeratorSuccess(progress).moderatorFailures).toBe(0);
   });
 });
 
@@ -196,6 +198,7 @@ describe("roundtable prompt context", () => {
     createdAt: index,
     roundtableRunId: "run",
     displayName: index % 2 ? "Architect" : "Pat",
+    participantId: index % 2 ? "architect" : undefined,
   }));
 
   it("bounds participant and moderator discussion context to 12 lines", () => {

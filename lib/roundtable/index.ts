@@ -76,7 +76,6 @@ export function recordParticipantTurn(
   return {
     ...progress,
     turnCount,
-    moderatorFailures: 0,
     spokenParticipantIds: progress.spokenParticipantIds.includes(participantId)
       ? progress.spokenParticipantIds
       : [...progress.spokenParticipantIds, participantId],
@@ -98,6 +97,10 @@ export function forceAnotherTurn(
 
 export function recordModeratorFailure(progress: RoundtableProgress) {
   return { ...progress, moderatorFailures: progress.moderatorFailures + 1 };
+}
+
+export function recordModeratorSuccess(progress: RoundtableProgress) {
+  return { ...progress, moderatorFailures: 0 };
 }
 
 export function shouldPauseAfterModeratorFailure(progress: RoundtableProgress) {
@@ -166,6 +169,7 @@ export function discussionLines(messages: Message[], runId: string) {
     .filter(
       (message) =>
         message.roundtableRunId === runId &&
+        (message.role === "user" || Boolean(message.participantId)) &&
         message.content.trim() &&
         !message.error,
     )

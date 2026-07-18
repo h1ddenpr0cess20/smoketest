@@ -37,9 +37,40 @@ import type {
   Message,
   MessageVariant,
   Mode,
+  PlanStyle,
   ProviderSettings,
   Thread,
 } from "@/lib/types";
+import type {
+  RoundtableConfig,
+  RoundtableParticipant,
+  RoundtableProgress,
+  RoundtableStatus,
+  RoundtableToolKey,
+} from "@/lib/roundtable/types";
+import { ROUNDTABLE_TOOL_KEYS } from "@/lib/roundtable/types";
+import {
+  canAcceptReady,
+  directlyAddressedParticipant,
+  discussionLines,
+  effectiveToolRequest,
+  forceAnotherTurn,
+  initialProgress,
+  leastRecentlyHeard,
+  moderatorInstructions,
+  moderatorPrompt,
+  parseModeratorDecision,
+  participantInstructions,
+  participantPrompt,
+  recordModeratorFailure,
+  recordModeratorSuccess,
+  recordParticipantTurn,
+  shouldPauseAfterModeratorFailure,
+  synthesisInstructions,
+  synthesisPrompt,
+  validParticipant,
+  validRoundtableConfig,
+} from "@/lib/roundtable";
 import {
   MCP_LABEL_PATTERN,
   TOOL_SUPPORT,
@@ -83,10 +114,49 @@ const STORAGE = {
   settings: "smoketest.providers.v1",
   provider: "smoketest.provider.v1",
   mode: "smoketest.mode.v1",
+  planStyle: "smoketest.plan-style.v1",
   theme: "smoketest.theme.v1",
   mcp: "smoketest.mcp.v1",
   reasoning: "smoketest.reasoning.v1",
 } as const;
+
+const ROUNDTABLE_COLORS = [
+  "#b54a2f",
+  "#7653b7",
+  "#187f78",
+  "#a36a12",
+  "#3f6da8",
+  "#9a456d",
+];
+
+const ROUNDTABLE_SUGGESTIONS = [
+  ["Architect", "Map system boundaries, data flow, and implementation shape."],
+  [
+    "Maintainer",
+    "Protect repository conventions and long-term maintainability.",
+  ],
+  [
+    "Security Reviewer",
+    "Challenge trust boundaries, abuse cases, and data handling.",
+  ],
+  [
+    "Performance Engineer",
+    "Find scaling costs, latency risks, and resource constraints.",
+  ],
+  [
+    "Product Engineer",
+    "Balance user experience, scope, and delivery tradeoffs.",
+  ],
+  ["Contrarian", "Stress-test consensus and surface overlooked alternatives."],
+] as const;
+
+const ROUNDTABLE_TOOL_LABELS: Record<RoundtableToolKey, string> = {
+  webSearch: "Web",
+  xSearch: "X",
+  codeInterpreter: "Code",
+  fileSearch: "Files",
+  mcp: "MCP",
+};
 
 // Attachment ingestion limits. Directory trees routed into the local RAG
 // index live in IndexedDB, so they get a wide budget; directory uploads that
@@ -138,6 +208,10 @@ function id() {
     globalThis.crypto?.randomUUID?.() ??
     `${Date.now()}-${Math.random().toString(16).slice(2)}`
   );
+}
+
+function timestamp() {
+  return Date.now();
 }
 
 function blankThread(): Thread {
@@ -217,6 +291,37 @@ function restoreMcpServers(saved: unknown): McpServerEntry[] {
   );
 }
 
+function restoreRoundtableConfig(saved: unknown): RoundtableConfig | undefined {
+  if (!saved || typeof saved !== "object") return undefined;
+  const value = saved as { participants?: unknown; userDisplayName?: unknown };
+  if (!Array.isArray(value.participants)) return undefined;
+  const participants = value.participants
+    .filter(
+      (participant): participant is RoundtableParticipant =>
+        Boolean(participant) &&
+        typeof participant === "object" &&
+        typeof (participant as RoundtableParticipant).id === "string" &&
+        typeof (participant as RoundtableParticipant).name === "string" &&
+        typeof (participant as RoundtableParticipant).perspective ===
+          "string" &&
+        typeof (participant as RoundtableParticipant).color === "string" &&
+        Array.isArray((participant as RoundtableParticipant).toolKeys),
+    )
+    .map((participant) => ({
+      ...participant,
+      toolKeys: participant.toolKeys.filter((key) =>
+        ROUNDTABLE_TOOL_KEYS.includes(key),
+      ),
+    }));
+  return {
+    participants,
+    userDisplayName:
+      typeof value.userDisplayName === "string"
+        ? value.userDisplayName
+        : undefined,
+  };
+}
+
 function restoreThreads(saved: unknown): Thread[] {
   if (!Array.isArray(saved)) return [blankThread()];
   const threads = saved
@@ -230,6 +335,7 @@ function restoreThreads(saved: unknown): Thread[] {
     )
     .map((thread) => ({
       ...thread,
+      roundtableConfig: restoreRoundtableConfig(thread.roundtableConfig),
       messages: thread.messages.filter(
         (message) =>
           Boolean(message) &&
@@ -493,6 +599,18 @@ type StreamOutcome = {
   error?: string;
   toolActivity: string[];
   generatedFiles: GeneratedFile[];
+};
+
+type RoundtableRuntime = {
+  threadId: string;
+  runId: string;
+  objective: string;
+  progress: RoundtableProgress;
+  lines: string[];
+  pendingInterjections: string[];
+  pauseRequested: boolean;
+  stopRequested: boolean;
+  synthesisRequested: boolean;
 };
 
 // Streams one assistant turn through the local proxy, shared by send and
@@ -893,6 +1011,8 @@ const MessageView = memo(function MessageView({
   fallbackProvider,
   busy,
   isStreaming,
+  roundtableResumable,
+  roundtableRunning,
   onApprovePlan,
   onRevisePlan,
   onRegenerate,
@@ -904,6 +1024,8 @@ const MessageView = memo(function MessageView({
   fallbackProvider: ProviderId;
   busy: boolean;
   isStreaming: boolean;
+  roundtableResumable: boolean;
+  roundtableRunning: boolean;
   onApprovePlan: (messageId: string) => void;
   onRevisePlan: (messageId: string) => void;
   onRegenerate: (messageId: string) => void;
@@ -929,6 +1051,8 @@ const MessageView = memo(function MessageView({
   const messageProviderId = message.provider ?? fallbackProvider;
   const messageProvider =
     PROVIDERS[messageProviderId] ?? PROVIDERS[fallbackProvider];
+  const participantMessage =
+    message.role === "assistant" && Boolean(message.participantId);
   const downloadFile = async (file: GeneratedFile) => {
     setDownloadingFileId(file.fileId);
     setDownloadError(null);
@@ -947,14 +1071,31 @@ const MessageView = memo(function MessageView({
       className={`message ${message.role} ${message.error ? "message-error" : ""}`}
     >
       <div className="message-rail">
-        <span className="avatar">
-          {message.role === "user" ? "YOU" : messageProvider.shortName}
+        <span
+          className={`avatar ${participantMessage ? "participant-avatar" : ""}`}
+          style={
+            participantMessage
+              ? ({
+                  "--participant": message.participantColor,
+                } as React.CSSProperties)
+              : undefined
+          }
+        >
+          {message.role === "user"
+            ? "YOU"
+            : participantMessage
+              ? message.displayName?.slice(0, 2).toUpperCase()
+              : messageProvider.shortName}
         </span>
         <span className="rail-line" />
       </div>
       <div className="message-body">
         <div className="message-meta">
-          <strong>{message.role === "user" ? "You" : "smoketest"}</strong>
+          <strong>
+            {message.role === "user"
+              ? message.displayName || "You"
+              : message.displayName || "smoketest"}
+          </strong>
           <span>{timeLabel(message.createdAt)}</span>
           {message.role === "assistant" && (
             <>
@@ -1047,16 +1188,18 @@ const MessageView = memo(function MessageView({
             </button>
             {message.role === "assistant" && (
               <>
-                <button
-                  onClick={() => onRegenerate(message.id)}
-                  disabled={busy}
-                  aria-label="Regenerate reply"
-                >
-                  <Icon name="refresh" size={13} /> Regenerate
-                </button>
+                {!roundtableResumable && (
+                  <button
+                    onClick={() => onRegenerate(message.id)}
+                    disabled={busy}
+                    aria-label="Regenerate reply"
+                  >
+                    <Icon name="refresh" size={13} /> Regenerate
+                  </button>
+                )}
                 <button
                   onClick={() => onBranch(message.id)}
-                  disabled={busy}
+                  disabled={busy || roundtableRunning}
                   aria-label="Branch session from here"
                 >
                   <Icon name="branch" size={13} /> Branch
@@ -1136,6 +1279,11 @@ export default function Home() {
   const [provider, setProvider] = useState<ProviderId>("openai");
   const [settings, setSettings] = useState<ProviderSettings>(defaultSettings);
   const [mode, setMode] = useState<Mode>("ask");
+  const [planStyle, setPlanStyle] = useState<PlanStyle>("solo");
+  const [roundtableStatus, setRoundtableStatus] =
+    useState<RoundtableStatus>("off");
+  const [roundtableTurnCount, setRoundtableTurnCount] = useState(0);
+  const [roundtableError, setRoundtableError] = useState("");
   const [theme, setTheme] = useState<"smoke" | "ember">("smoke");
   const [reasoning, setReasoning] = useState("medium");
   const [draft, setDraft] = useState("");
@@ -1164,6 +1312,9 @@ export default function Home() {
   const [streamingId, setStreamingId] = useState("");
   const discoverSeq = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  const roundtableRuntimeRef = useRef<RoundtableRuntime | null>(null);
+  const roundtableDrivingRef = useRef<RoundtableRuntime | null>(null);
+  const threadsRef = useRef<Thread[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const dirRef = useRef<HTMLInputElement>(null);
   const attachMenuRef = useRef<HTMLDivElement>(null);
@@ -1179,6 +1330,10 @@ export default function Home() {
   const currentSettings = settings[provider];
 
   useEffect(() => {
+    threadsRef.current = threads;
+  }, [threads]);
+
+  useEffect(() => {
     const restoredThreads = (() => {
       try {
         return restoreThreads(
@@ -1191,6 +1346,7 @@ export default function Home() {
     let restoredSettings: ProviderSettings | null = null;
     let restoredProvider: ProviderId | null = null;
     let restoredMode: Mode | null = null;
+    let restoredPlanStyle: PlanStyle | null = null;
     let restoredTheme: "smoke" | "ember" | null = null;
     let restoredReasoning: string | null = null;
     try {
@@ -1204,6 +1360,9 @@ export default function Home() {
       const savedMode = localStorage.getItem(STORAGE.mode);
       if (savedMode && ["ask", "plan", "build"].includes(savedMode))
         restoredMode = savedMode as Mode;
+      const savedPlanStyle = localStorage.getItem(STORAGE.planStyle);
+      if (savedPlanStyle === "solo" || savedPlanStyle === "roundtable")
+        restoredPlanStyle = savedPlanStyle;
       const savedTheme = localStorage.getItem(STORAGE.theme);
       if (savedTheme === "smoke" || savedTheme === "ember")
         restoredTheme = savedTheme;
@@ -1226,11 +1385,15 @@ export default function Home() {
       if (restoredSettings) setSettings(restoredSettings);
       if (restoredProvider) setProvider(restoredProvider);
       if (restoredMode) setMode(restoredMode);
+      if (restoredPlanStyle) setPlanStyle(restoredPlanStyle);
       if (restoredTheme) setTheme(restoredTheme);
       if (restoredReasoning) setReasoning(restoredReasoning);
       setMcpServers(restoredMcp);
       setThreads(restoredThreads);
       setActiveId(restoredThreads[0].id);
+      setRoundtableStatus(
+        restoredThreads[0].roundtableConfig ? "stopped" : "off",
+      );
       setHydrated(true);
     });
   }, []);
@@ -1256,13 +1419,23 @@ export default function Home() {
       localStorage.setItem(STORAGE.settings, JSON.stringify(settings));
       localStorage.setItem(STORAGE.provider, provider);
       localStorage.setItem(STORAGE.mode, mode);
+      localStorage.setItem(STORAGE.planStyle, planStyle);
       localStorage.setItem(STORAGE.theme, theme);
       localStorage.setItem(STORAGE.mcp, JSON.stringify(mcpServers));
       localStorage.setItem(STORAGE.reasoning, reasoning);
     } catch {
       // Storage unavailable — settings stay in memory for this session.
     }
-  }, [settings, provider, mode, theme, mcpServers, reasoning, hydrated]);
+  }, [
+    settings,
+    provider,
+    mode,
+    planStyle,
+    theme,
+    mcpServers,
+    reasoning,
+    hydrated,
+  ]);
 
   // Auto-scroll only while the reader is already near the bottom; scrolling up
   // to reread must not be fought by the stream (wordmark's shouldAutoScroll).
@@ -1321,6 +1494,7 @@ export default function Home() {
   }, [attachMenuOpen]);
 
   function createThread() {
+    stopRoundtable("stopped");
     const thread = blankThread();
     setThreads((current) => [thread, ...current]);
     setActiveId(thread.id);
@@ -1331,6 +1505,7 @@ export default function Home() {
 
   function deleteThread(threadId: string) {
     if (streaming) return;
+    if (threadId === activeId) stopRoundtable("stopped");
     void deleteLocalDocIndex(threadId);
     const next = threads.filter((thread) => thread.id !== threadId);
     if (!next.length) {
@@ -1341,6 +1516,81 @@ export default function Home() {
     }
     setThreads(next);
     if (threadId === activeId) setActiveId(next[0].id);
+  }
+
+  function selectThread(threadId: string) {
+    if (threadId === activeId) return;
+    stopRoundtable("stopped");
+    setActiveId(threadId);
+    const thread = threadsRef.current.find((item) => item.id === threadId);
+    setRoundtableStatus(thread?.roundtableConfig ? "stopped" : "off");
+    setRoundtableTurnCount(0);
+    setRoundtableError("");
+    setSidebarOpen(false);
+  }
+
+  function changeMode(nextMode: Mode) {
+    if (nextMode !== "plan") stopRoundtable("stopped");
+    setMode(nextMode);
+  }
+
+  function updateRoundtableConfig(config: RoundtableConfig) {
+    if (!activeThread || roundtableStatus === "running") return;
+    setThreads((current) =>
+      current.map((thread) =>
+        thread.id === activeThread.id
+          ? { ...thread, updatedAt: Date.now(), roundtableConfig: config }
+          : thread,
+      ),
+    );
+    setRoundtableStatus(validRoundtableConfig(config) ? "stopped" : "off");
+  }
+
+  function addRoundtableParticipant(name = "", perspective = "") {
+    if (!activeThread) return;
+    const config = activeThread.roundtableConfig ?? { participants: [] };
+    updateRoundtableConfig({
+      ...config,
+      participants: [
+        ...config.participants,
+        {
+          id: id(),
+          name,
+          perspective,
+          color:
+            ROUNDTABLE_COLORS[
+              config.participants.length % ROUNDTABLE_COLORS.length
+            ],
+          toolKeys: [],
+        },
+      ],
+    });
+  }
+
+  function patchRoundtableParticipant(
+    participantId: string,
+    patch: Partial<RoundtableParticipant>,
+  ) {
+    if (!activeThread?.roundtableConfig) return;
+    updateRoundtableConfig({
+      ...activeThread.roundtableConfig,
+      participants: activeThread.roundtableConfig.participants.map(
+        (participant) =>
+          participant.id === participantId
+            ? { ...participant, ...patch }
+            : participant,
+      ),
+    });
+  }
+
+  function removeRoundtableParticipant(participantId: string) {
+    if (!activeThread?.roundtableConfig) return;
+    updateRoundtableConfig({
+      ...activeThread.roundtableConfig,
+      participants: activeThread.roundtableConfig.participants.filter(
+        (participant) => participant.id !== participantId,
+      ),
+    });
   }
 
   function updateProviderSettings(
@@ -1636,7 +1886,7 @@ export default function Home() {
       id: id(),
       role: "assistant",
       content,
-      createdAt: Date.now(),
+      createdAt: timestamp(),
       error: isError,
     };
     setThreads((current) =>
@@ -1652,9 +1902,520 @@ export default function Home() {
     );
   }
 
+  function appendMessage(threadId: string, message: Message) {
+    setThreads((current) =>
+      current.map((thread) =>
+        thread.id === threadId
+          ? {
+              ...thread,
+              updatedAt: Date.now(),
+              messages: [...thread.messages, message],
+            }
+          : thread,
+      ),
+    );
+  }
+
+  function stopRoundtable(status: RoundtableStatus = "stopped") {
+    const runtime = roundtableRuntimeRef.current;
+    if (runtime) runtime.stopRequested = true;
+    abortRef.current?.abort();
+    roundtableRuntimeRef.current = null;
+    setStreaming(false);
+    setStreamingId("");
+    setRoundtableStatus(status);
+  }
+
+  function runtimeFromThread(thread: Thread): RoundtableRuntime | null {
+    const lastRunId = [...thread.messages]
+      .reverse()
+      .find((message) => message.roundtableRunId)?.roundtableRunId;
+    if (!lastRunId) return null;
+    const runMessages = thread.messages.filter(
+      (message) => message.roundtableRunId === lastRunId,
+    );
+    const objective = runMessages.find(
+      (message) => message.role === "user" && message.content.trim(),
+    )?.content;
+    if (!objective) return null;
+    let progress = initialProgress();
+    for (const message of runMessages) {
+      if (
+        message.role === "assistant" &&
+        message.participantId &&
+        !message.error
+      )
+        progress = recordParticipantTurn(progress, message.participantId);
+    }
+    return {
+      threadId: thread.id,
+      runId: lastRunId,
+      objective,
+      progress,
+      lines: discussionLines(runMessages, lastRunId),
+      pendingInterjections: [],
+      pauseRequested: false,
+      stopRequested: false,
+      synthesisRequested: false,
+    };
+  }
+
+  async function sharedRoundtableContext(
+    threadId: string,
+    query: string,
+    signal: AbortSignal,
+  ) {
+    const thread = threadsRef.current.find((item) => item.id === threadId);
+    const allAttachments =
+      thread?.messages.flatMap((message) => message.attachments ?? []) ?? [];
+    const byName = new Map<string, Attachment>();
+    for (const attachment of allAttachments)
+      byName.set(attachment.name, attachment);
+    const unique = [...byName.values()];
+    const inline = unique
+      .filter((attachment) => attachment.content.trim())
+      .map(
+        (attachment) =>
+          `--- ${attachment.name} ---\n${attachment.content}\n--- end ${attachment.name} ---`,
+      )
+      .join("\n\n");
+    if (!currentProvider.local || !currentSettings.localRag) return inline;
+    const embeddingModel = resolveEmbeddingModel(
+      currentSettings.embeddingModel,
+      models,
+    );
+    if (!embeddingModel || !unique.length) return inline;
+    try {
+      const embed = makeEmbed(provider, currentSettings.apiKey, embeddingModel);
+      await restoreLocalDocIndex(threadId);
+      if (indexingRef.current) await indexingRef.current.catch(() => null);
+      const indexedNames = new Set(getIndexedDocumentNames(threadId));
+      const missing = unique
+        .filter(
+          (attachment) =>
+            !indexedNames.has(attachment.name) && attachment.content.trim(),
+        )
+        .map((attachment) => ({
+          name: attachment.name,
+          text: attachment.content,
+        }));
+      if (missing.length)
+        await indexDocuments(threadId, missing, embeddingModel, embed, signal);
+      const retrieved = await retrieveRelevantChunks(
+        threadId,
+        query,
+        embeddingModel,
+        embed,
+        signal,
+      );
+      return (
+        buildReferenceBlock(
+          retrieved,
+          getIndexedDocumentNames(threadId),
+          query,
+        ) || inline
+      );
+    } catch {
+      return inline;
+    }
+  }
+
+  async function synthesizeRoundtable(runtime: RoundtableRuntime) {
+    if (roundtableRuntimeRef.current !== runtime || runtime.stopRequested)
+      return;
+    setRoundtableStatus("synthesizing");
+    setRoundtableError("");
+    setStreaming(true);
+    const messageId = id();
+    appendMessage(runtime.threadId, {
+      id: messageId,
+      role: "assistant",
+      content: "",
+      createdAt: timestamp(),
+      provider,
+      model: currentSettings.model,
+      mode: "plan",
+      roundtableRunId: runtime.runId,
+    });
+    setStreamingId(messageId);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const outcome = await streamAssistant(
+      {
+        provider,
+        apiKey: currentSettings.apiKey,
+        model: currentSettings.model,
+        input: [
+          {
+            role: "user",
+            content: synthesisPrompt(runtime.objective, runtime.lines),
+          },
+        ],
+        instructions: `${synthesisInstructions()}\n\n${CONTEXT_GUARDRAIL}`,
+        reasoningEffort: reasoning,
+        priorityProcessing: currentSettings.priorityProcessing,
+        tools: {},
+      },
+      controller.signal,
+      (text) => patchMessage(runtime.threadId, messageId, { content: text }),
+    );
+    abortRef.current = null;
+    setStreaming(false);
+    setStreamingId("");
+    runtime.synthesisRequested = false;
+    if (runtime.stopRequested || controller.signal.aborted) {
+      patchMessage(runtime.threadId, messageId, {
+        content: outcome.text
+          ? `${outcome.text}\n\n_Synthesis stopped._`
+          : "Synthesis stopped.",
+        error: true,
+      });
+      setRoundtableStatus("stopped");
+      return;
+    }
+    if (outcome.error) {
+      patchMessage(runtime.threadId, messageId, {
+        content: outcome.text
+          ? `${outcome.text}\n\n${outcome.error}`
+          : `Plan synthesis failed: ${outcome.error}`,
+        error: true,
+      });
+      setRoundtableError(
+        "Plan synthesis failed. The discussion is preserved; retry when ready.",
+      );
+      setRoundtableStatus("stopped");
+      return;
+    }
+    patchMessage(runtime.threadId, messageId, {
+      content: outcome.text || "The provider completed without text output.",
+      planState: "proposed",
+      toolActivity: [],
+    });
+    setRoundtableStatus("stopped");
+  }
+
+  async function runRoundtableLoop(runtime: RoundtableRuntime) {
+    while (roundtableRuntimeRef.current === runtime && !runtime.stopRequested) {
+      if (runtime.synthesisRequested) {
+        await synthesizeRoundtable(runtime);
+        return;
+      }
+      if (runtime.pauseRequested) {
+        setRoundtableStatus("paused");
+        setStreaming(false);
+        setStreamingId("");
+        return;
+      }
+      const thread = threadsRef.current.find(
+        (item) => item.id === runtime.threadId,
+      );
+      const config = thread?.roundtableConfig;
+      if (!config || !validRoundtableConfig(config)) {
+        setRoundtableError(
+          "The cast needs at least two named participants with perspectives.",
+        );
+        setRoundtableStatus("paused");
+        return;
+      }
+      const participants = config.participants.filter(validParticipant);
+      const routedInterjection = runtime.pendingInterjections.shift();
+      let participant = routedInterjection
+        ? directlyAddressedParticipant(routedInterjection, participants)
+        : undefined;
+      if (!participant) {
+        setStreaming(true);
+        const controller = new AbortController();
+        abortRef.current = controller;
+        const moderator = await streamAssistant(
+          {
+            provider,
+            apiKey: currentSettings.apiKey,
+            model: currentSettings.model,
+            input: [
+              {
+                role: "user",
+                content: moderatorPrompt(
+                  config,
+                  runtime.objective,
+                  runtime.lines.slice(-12),
+                  canAcceptReady(runtime.progress, participants),
+                ),
+              },
+            ],
+            instructions: moderatorInstructions(),
+            reasoningEffort: reasoning,
+            priorityProcessing: currentSettings.priorityProcessing,
+            tools: {},
+          },
+          controller.signal,
+          () => {},
+        );
+        abortRef.current = null;
+        setStreaming(false);
+        if (runtime.stopRequested || controller.signal.aborted) break;
+        if (moderator.error) {
+          runtime.progress = recordModeratorFailure(runtime.progress);
+          if (shouldPauseAfterModeratorFailure(runtime.progress)) {
+            setRoundtableError(
+              `Moderator failed three times: ${moderator.error}. Check the provider connection, then Continue.`,
+            );
+            setRoundtableStatus("paused");
+            return;
+          }
+          participant = leastRecentlyHeard(participants, runtime.progress);
+        } else {
+          runtime.progress = recordModeratorSuccess(runtime.progress);
+          const decision = parseModeratorDecision(moderator.text, participants);
+          if (
+            decision.type === "ready" &&
+            canAcceptReady(runtime.progress, participants)
+          ) {
+            setRoundtableStatus("ready");
+            return;
+          }
+          participant =
+            decision.type === "next"
+              ? participants.find((item) => item.id === decision.participantId)
+              : leastRecentlyHeard(participants, runtime.progress);
+        }
+      }
+      if (!participant) {
+        setRoundtableError("No valid participant could be selected.");
+        setRoundtableStatus("paused");
+        return;
+      }
+
+      const messageId = id();
+      appendMessage(runtime.threadId, {
+        id: messageId,
+        role: "assistant",
+        content: "",
+        createdAt: timestamp(),
+        provider,
+        model: currentSettings.model,
+        mode: "plan",
+        roundtableRunId: runtime.runId,
+        participantId: participant.id,
+        displayName: participant.name,
+        participantColor: participant.color,
+      });
+      setStreaming(true);
+      setStreamingId(messageId);
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const context = await sharedRoundtableContext(
+        runtime.threadId,
+        `${runtime.objective}\n${runtime.lines.slice(-4).join("\n")}`,
+        controller.signal,
+      );
+      const outcome = await streamAssistant(
+        {
+          provider,
+          apiKey: currentSettings.apiKey,
+          model: currentSettings.model,
+          input: [
+            {
+              role: "user",
+              content: participantPrompt(
+                runtime.objective,
+                runtime.lines.slice(-12),
+                context,
+              ),
+            },
+          ],
+          instructions: `${participantInstructions(participant)}\n\n${CONTEXT_GUARDRAIL}`,
+          reasoningEffort: reasoning,
+          priorityProcessing: currentSettings.priorityProcessing,
+          tools: effectiveToolRequest(
+            participant,
+            provider,
+            currentSettings,
+            mcpServers,
+          ),
+        },
+        controller.signal,
+        (text, usedTools) =>
+          patchMessage(runtime.threadId, messageId, {
+            content: text,
+            toolActivity: usedTools,
+          }),
+      );
+      abortRef.current = null;
+      setStreaming(false);
+      setStreamingId("");
+      if (runtime.stopRequested || controller.signal.aborted) {
+        patchMessage(runtime.threadId, messageId, {
+          content: outcome.text
+            ? `${outcome.text}\n\n_Turn stopped._`
+            : "Turn stopped.",
+          toolActivity: outcome.toolActivity,
+        });
+        break;
+      }
+      if (outcome.error) {
+        patchMessage(runtime.threadId, messageId, {
+          content: outcome.text
+            ? `${outcome.text}\n\n${outcome.error}`
+            : outcome.error,
+          error: true,
+          toolActivity: outcome.toolActivity,
+        });
+        setRoundtableError(
+          `${participant.name}'s turn failed. Check the provider or tool settings, then Continue.`,
+        );
+        setRoundtableStatus("paused");
+        return;
+      }
+      const content = outcome.text || "No contribution was returned.";
+      patchMessage(runtime.threadId, messageId, {
+        content,
+        toolActivity: outcome.toolActivity,
+        generatedFiles: outcome.generatedFiles,
+      });
+      runtime.lines.push(
+        `${participant.name}: ${content.replace(/\s+/g, " ").trim()}`,
+      );
+      runtime.progress = recordParticipantTurn(
+        runtime.progress,
+        participant.id,
+      );
+      setRoundtableTurnCount(runtime.progress.turnCount);
+    }
+    if (roundtableRuntimeRef.current === runtime) {
+      setStreaming(false);
+      setStreamingId("");
+      setRoundtableStatus("stopped");
+    }
+  }
+
+  async function driveRoundtable(runtime: RoundtableRuntime) {
+    if (roundtableDrivingRef.current === runtime) return;
+    roundtableDrivingRef.current = runtime;
+    try {
+      await runRoundtableLoop(runtime);
+    } finally {
+      if (roundtableDrivingRef.current === runtime)
+        roundtableDrivingRef.current = null;
+    }
+  }
+
+  function submitRoundtable(prompt: string) {
+    if (!activeThread?.roundtableConfig) return;
+    const config = activeThread.roundtableConfig;
+    if (!validRoundtableConfig(config)) {
+      setRoundtableError(
+        "Add at least two participants with a name and perspective.",
+      );
+      return;
+    }
+    const userName = config.userDisplayName?.trim() || "You";
+    let runtime = roundtableRuntimeRef.current;
+    const canReuse = runtime?.threadId === activeThread.id;
+    if (!canReuse) runtime = runtimeFromThread(activeThread);
+    const isNew = !runtime;
+    if (!runtime) {
+      runtime = {
+        threadId: activeThread.id,
+        runId: id(),
+        objective: prompt,
+        progress: initialProgress(),
+        lines: [],
+        pendingInterjections: [],
+        pauseRequested: false,
+        stopRequested: false,
+        synthesisRequested: false,
+      };
+    }
+    const userMessage: Message = {
+      id: id(),
+      role: "user",
+      content: prompt,
+      createdAt: timestamp(),
+      attachments,
+      mode: "plan",
+      roundtableRunId: runtime.runId,
+      displayName: userName,
+    };
+    setThreads((current) =>
+      current.map((thread) =>
+        thread.id === activeThread.id
+          ? {
+              ...thread,
+              title: thread.messages.length ? thread.title : shortTitle(prompt),
+              updatedAt: Date.now(),
+              messages: [...thread.messages, userMessage],
+            }
+          : thread,
+      ),
+    );
+    runtime.lines.push(`${userName}: ${prompt.replace(/\s+/g, " ").trim()}`);
+    runtime.pendingInterjections.push(prompt);
+    runtime.pauseRequested = false;
+    runtime.stopRequested = false;
+    runtime.synthesisRequested = false;
+    if (roundtableStatus === "ready")
+      runtime.progress = forceAnotherTurn(runtime.progress);
+    roundtableRuntimeRef.current = runtime;
+    setDraft("");
+    setAttachments([]);
+    setAttachNote(null);
+    setRoundtableError("");
+    setRoundtableStatus("running");
+    autoScrollRef.current = true;
+    if (isNew || !streaming) void driveRoundtable(runtime);
+  }
+
+  function pauseRoundtable() {
+    const runtime = roundtableRuntimeRef.current;
+    if (!runtime || roundtableStatus !== "running") return;
+    runtime.pauseRequested = true;
+    setRoundtableStatus("pausing");
+  }
+
+  function continueRoundtable() {
+    if (!activeThread?.roundtableConfig) return;
+    let runtime = roundtableRuntimeRef.current;
+    if (!runtime || runtime.threadId !== activeThread.id)
+      runtime = runtimeFromThread(activeThread);
+    if (!runtime) return;
+    if (roundtableStatus === "ready")
+      runtime.progress = forceAnotherTurn(runtime.progress);
+    runtime.pauseRequested = false;
+    runtime.stopRequested = false;
+    runtime.synthesisRequested = false;
+    roundtableRuntimeRef.current = runtime;
+    setRoundtableError("");
+    setRoundtableStatus("running");
+    void driveRoundtable(runtime);
+  }
+
+  function requestRoundtableSynthesis() {
+    if (!activeThread?.roundtableConfig) return;
+    let runtime = roundtableRuntimeRef.current;
+    if (!runtime || runtime.threadId !== activeThread.id)
+      runtime = runtimeFromThread(activeThread);
+    if (!runtime) return;
+    runtime.synthesisRequested = true;
+    runtime.pauseRequested = false;
+    runtime.stopRequested = false;
+    roundtableRuntimeRef.current = runtime;
+    setRoundtableError("");
+    if (roundtableDrivingRef.current !== runtime)
+      void synthesizeRoundtable(runtime);
+  }
+
   async function submit(value = draft, modeOverride?: Mode) {
     let prompt = value.trim();
-    if (!prompt || streaming || !activeThread) return;
+    const acceptingRoundtableInterjection =
+      mode === "plan" &&
+      planStyle === "roundtable" &&
+      roundtableStatus === "running";
+    if (
+      !prompt ||
+      (streaming && !acceptingRoundtableInterjection) ||
+      !activeThread
+    )
+      return;
     let activeMode = modeOverride ?? mode;
 
     const command = parseCommand(prompt);
@@ -1700,7 +2461,7 @@ export default function Home() {
         setDraft("");
         return;
       }
-      setMode(command.mode);
+      changeMode(command.mode);
       activeMode = command.mode;
       if (!command.prompt) {
         setDraft("");
@@ -1717,12 +2478,17 @@ export default function Home() {
       return;
     }
 
+    if (activeMode === "plan" && planStyle === "roundtable") {
+      submitRoundtable(prompt);
+      return;
+    }
+
     const threadId = activeThread.id;
     const userMessage: Message = {
       id: id(),
       role: "user",
       content: prompt,
-      createdAt: Date.now(),
+      createdAt: timestamp(),
       attachments,
       mode: activeMode,
     };
@@ -1731,7 +2497,7 @@ export default function Home() {
       id: assistantId,
       role: "assistant",
       content: "",
-      createdAt: Date.now(),
+      createdAt: timestamp(),
       provider,
       model: currentSettings.model,
       mode: activeMode,
@@ -2093,12 +2859,23 @@ export default function Home() {
       (message) => message.id === messageId,
     );
     if (cut < 0) return;
-    const now = Date.now();
+    const now = timestamp();
     const branch: Thread = {
       id: id(),
       title: `${activeThread.title} (branch)`.slice(0, 60),
       createdAt: now,
       updatedAt: now,
+      roundtableConfig: activeThread.roundtableConfig
+        ? {
+            ...activeThread.roundtableConfig,
+            participants: activeThread.roundtableConfig.participants.map(
+              (participant) => ({
+                ...participant,
+                toolKeys: [...participant.toolKeys],
+              }),
+            ),
+          }
+        : undefined,
       messages: activeThread.messages.slice(0, cut + 1).map((message) => ({
         ...message,
         id: id(),
@@ -2111,6 +2888,7 @@ export default function Home() {
     void branchLocalDocIndex(activeThread.id, branch.id);
     setThreads((current) => [branch, ...current]);
     setActiveId(branch.id);
+    setRoundtableStatus(branch.roundtableConfig ? "stopped" : "off");
     setSidebarOpen(false);
   }
 
@@ -2137,6 +2915,7 @@ export default function Home() {
     approve: (messageId) => {
       if (streaming || !activeThread) return;
       patchMessage(activeThread.id, messageId, { planState: "approved" });
+      stopRoundtable("stopped");
       setMode("build");
       void submit(
         "Implement the approved plan. Complete the work and verify it.",
@@ -2149,6 +2928,7 @@ export default function Home() {
         planState: "changes_requested",
       });
       setMode("plan");
+      setPlanStyle("solo");
       setDraft("Revise the plan: ");
       textareaRef.current?.focus();
     },
@@ -2226,8 +3006,21 @@ export default function Home() {
   }
 
   const canSend = Boolean(
-    draft.trim() && currentSettings.model.trim() && !streaming,
+    draft.trim() &&
+    currentSettings.model.trim() &&
+    (!streaming ||
+      (mode === "plan" &&
+        planStyle === "roundtable" &&
+        roundtableStatus === "running")),
   );
+  const roundtableConfig = activeThread?.roundtableConfig;
+  const hasRoundtableDiscussion = Boolean(
+    activeThread?.messages.some((message) => message.roundtableRunId),
+  );
+  const roundtableRunning =
+    roundtableStatus === "running" || roundtableStatus === "pausing";
+  const showRoundtableSetup =
+    mode === "plan" && planStyle === "roundtable" && !hasRoundtableDiscussion;
 
   return (
     <main className="app-shell" data-theme={theme}>
@@ -2268,8 +3061,7 @@ export default function Home() {
               >
                 <button
                   onClick={() => {
-                    setActiveId(thread.id);
-                    setSidebarOpen(false);
+                    selectThread(thread.id);
                   }}
                 >
                   <span className="thread-dot" />
@@ -2358,7 +3150,7 @@ export default function Home() {
               <button
                 key={item}
                 className={mode === item ? "active" : ""}
-                onClick={() => setMode(item)}
+                onClick={() => changeMode(item)}
               >
                 <span>{MODE_COPY[item].mark}</span>
                 {MODE_COPY[item].label}
@@ -2400,8 +3192,187 @@ export default function Home() {
           </div>
         </header>
 
+        {mode === "plan" && (
+          <div className="plan-style-bar" aria-label="Planning style">
+            <span>Planning style</span>
+            <div>
+              <button
+                className={planStyle === "solo" ? "active" : ""}
+                onClick={() => {
+                  if (planStyle === "roundtable") stopRoundtable("stopped");
+                  setPlanStyle("solo");
+                }}
+              >
+                Solo
+              </button>
+              <button
+                className={planStyle === "roundtable" ? "active" : ""}
+                onClick={() => {
+                  setPlanStyle("roundtable");
+                  if (!activeThread?.roundtableConfig)
+                    updateRoundtableConfig({ participants: [] });
+                }}
+              >
+                Roundtable
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="conversation">
-          {!activeThread?.messages.length ? (
+          {showRoundtableSetup ? (
+            <section
+              className="roundtable-setup"
+              aria-labelledby="roundtable-title"
+            >
+              <div className="roundtable-setup-head">
+                <div>
+                  <p className="overline">PLAN TOGETHER</p>
+                  <h1 id="roundtable-title">Assemble the roundtable</h1>
+                  <p>
+                    Give each participant a distinct planning perspective and
+                    only the provider tools they should use. Attached code and
+                    local retrieval context are shared with the full cast.
+                  </p>
+                </div>
+                <label>
+                  Your display name
+                  <input
+                    value={roundtableConfig?.userDisplayName ?? ""}
+                    onChange={(event) =>
+                      updateRoundtableConfig({
+                        ...(roundtableConfig ?? { participants: [] }),
+                        userDisplayName: event.target.value,
+                      })
+                    }
+                    placeholder="You"
+                  />
+                </label>
+              </div>
+              <div className="roundtable-suggestions">
+                <span>QUICK ADD</span>
+                {ROUNDTABLE_SUGGESTIONS.map(([name, perspective]) => (
+                  <button
+                    key={name}
+                    onClick={() => addRoundtableParticipant(name, perspective)}
+                    disabled={roundtableConfig?.participants.some(
+                      (participant) => participant.name === name,
+                    )}
+                  >
+                    + {name}
+                  </button>
+                ))}
+                <button onClick={() => addRoundtableParticipant()}>
+                  + Custom
+                </button>
+              </div>
+              <div className="roundtable-cast-editor">
+                {roundtableConfig?.participants.map((participant, index) => (
+                  <article
+                    key={participant.id}
+                    style={
+                      {
+                        "--participant": participant.color,
+                      } as React.CSSProperties
+                    }
+                  >
+                    <div className="participant-number">{index + 1}</div>
+                    <div className="participant-fields">
+                      <input
+                        value={participant.name}
+                        onChange={(event) =>
+                          patchRoundtableParticipant(participant.id, {
+                            name: event.target.value,
+                          })
+                        }
+                        placeholder="Participant name"
+                        aria-label={`Participant ${index + 1} name`}
+                      />
+                      <textarea
+                        value={participant.perspective}
+                        onChange={(event) =>
+                          patchRoundtableParticipant(participant.id, {
+                            perspective: event.target.value,
+                          })
+                        }
+                        placeholder="What perspective should they bring?"
+                        rows={2}
+                        aria-label={`Participant ${index + 1} perspective`}
+                      />
+                      <div
+                        className="participant-tools"
+                        aria-label="Tool grants"
+                      >
+                        {ROUNDTABLE_TOOL_KEYS.map((toolKey) => {
+                          const supported = TOOL_SUPPORT[provider][toolKey];
+                          const globallyEnabled =
+                            toolKey === "mcp"
+                              ? mcpServers.some((server) => server.enabled)
+                              : currentSettings[toolKey];
+                          const available = supported && globallyEnabled;
+                          const granted =
+                            participant.toolKeys.includes(toolKey);
+                          return (
+                            <label
+                              key={toolKey}
+                              className={!available ? "unavailable" : ""}
+                              title={
+                                available
+                                  ? `Grant ${ROUNDTABLE_TOOL_LABELS[toolKey]}`
+                                  : "Saved grant is unavailable with the current provider or global settings"
+                              }
+                            >
+                              <input
+                                type="checkbox"
+                                checked={granted}
+                                onChange={(event) =>
+                                  patchRoundtableParticipant(participant.id, {
+                                    toolKeys: event.target.checked
+                                      ? [...participant.toolKeys, toolKey]
+                                      : participant.toolKeys.filter(
+                                          (item) => item !== toolKey,
+                                        ),
+                                  })
+                                }
+                              />
+                              {ROUNDTABLE_TOOL_LABELS[toolKey]}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <button
+                      className="participant-remove"
+                      onClick={() =>
+                        removeRoundtableParticipant(participant.id)
+                      }
+                      aria-label={`Remove ${participant.name || `participant ${index + 1}`}`}
+                    >
+                      <Icon name="trash" size={14} />
+                    </button>
+                  </article>
+                ))}
+                {!roundtableConfig?.participants.length && (
+                  <div className="roundtable-cast-empty">
+                    Start with two quick-add roles or create your own cast.
+                  </div>
+                )}
+              </div>
+              <div className="roundtable-setup-foot">
+                <span>
+                  {(roundtableConfig?.participants.filter(validParticipant)
+                    .length ?? 0) < 2
+                    ? "At least two complete participants are required."
+                    : "Cast ready — describe the coding task below."}
+                </span>
+                <b>
+                  {roundtableConfig?.participants.filter(validParticipant)
+                    .length ?? 0}{" "}
+                  ready
+                </b>
+              </div>
+            </section>
+          ) : !activeThread?.messages.length ? (
             <div className="empty-state">
               <div className="splash-mark" aria-hidden="true">
                 <WildfireMark />
@@ -2451,6 +3422,10 @@ export default function Home() {
                   fallbackProvider={provider}
                   busy={streaming}
                   isStreaming={streamingId === message.id}
+                  roundtableResumable={Boolean(
+                    message.roundtableRunId && activeThread.roundtableConfig,
+                  )}
+                  roundtableRunning={roundtableRunning}
                   onApprovePlan={approvePlan}
                   onRevisePlan={revisePlan}
                   onRegenerate={regenerateMessage}
@@ -2465,6 +3440,82 @@ export default function Home() {
         </div>
 
         <div className="composer-zone">
+          {mode === "plan" &&
+            planStyle === "roundtable" &&
+            roundtableConfig &&
+            (validRoundtableConfig(roundtableConfig) ||
+              hasRoundtableDiscussion) && (
+              <div className="roundtable-controls">
+                <div className="roundtable-control-copy">
+                  <div className="roundtable-cast-chips">
+                    {roundtableConfig.participants
+                      .filter(validParticipant)
+                      .map((participant) => (
+                        <span
+                          key={participant.id}
+                          style={
+                            {
+                              "--participant": participant.color,
+                            } as React.CSSProperties
+                          }
+                        >
+                          {participant.name}
+                        </span>
+                      ))}
+                  </div>
+                  <small className={`roundtable-status ${roundtableStatus}`}>
+                    {roundtableStatus} · {roundtableTurnCount} turn
+                    {roundtableTurnCount === 1 ? "" : "s"}
+                  </small>
+                  {roundtableError && (
+                    <small className="roundtable-error" role="alert">
+                      {roundtableError}
+                    </small>
+                  )}
+                </div>
+                <div className="roundtable-control-actions">
+                  {roundtableStatus === "running" && (
+                    <button onClick={pauseRoundtable}>Pause</button>
+                  )}
+                  {roundtableStatus === "pausing" && (
+                    <button disabled>Pausing…</button>
+                  )}
+                  {["paused", "ready", "stopped"].includes(roundtableStatus) &&
+                    hasRoundtableDiscussion && (
+                      <button onClick={continueRoundtable}>Continue</button>
+                    )}
+                  {roundtableRunning && (
+                    <button
+                      className="secondary"
+                      onClick={() => stopRoundtable("stopped")}
+                    >
+                      Stop
+                    </button>
+                  )}
+                  <button
+                    className="secondary"
+                    onClick={() => {
+                      stopRoundtable("stopped");
+                      setPlanStyle("solo");
+                    }}
+                  >
+                    Leave
+                  </button>
+                  <button
+                    className="synthesize"
+                    disabled={
+                      !hasRoundtableDiscussion ||
+                      roundtableStatus === "synthesizing"
+                    }
+                    onClick={requestRoundtableSynthesis}
+                  >
+                    {roundtableStatus === "synthesizing"
+                      ? "Synthesizing…"
+                      : "Synthesize plan"}
+                  </button>
+                </div>
+              </div>
+            )}
           <form
             className={`composer ${dragOver ? "drag-over" : ""}`}
             onSubmit={onSubmit}
@@ -2526,7 +3577,13 @@ export default function Home() {
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={onComposerKeyDown}
-              placeholder={`Message ${currentSettings.model || currentProvider.name}…`}
+              placeholder={
+                mode === "plan" && planStyle === "roundtable"
+                  ? roundtableStatus === "running"
+                    ? "Interject, or address one participant by name…"
+                    : "Describe the task for the roundtable…"
+                  : `Message ${currentSettings.model || currentProvider.name}…`
+              }
               rows={1}
               aria-label="Message"
             />
@@ -2591,7 +3648,7 @@ export default function Home() {
                   </div>
                 )}
               </div>
-              {streaming ? (
+              {streaming && !(mode === "plan" && planStyle === "roundtable") ? (
                 <button
                   type="button"
                   className="composer-send is-stop"
