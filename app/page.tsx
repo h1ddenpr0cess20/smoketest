@@ -13,7 +13,7 @@ import {
   useRef,
   useState,
 } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import {
@@ -1052,6 +1052,15 @@ function ExportMenu({
 
 // Memoized so a streaming update to one message doesn't re-render (and
 // re-parse the markdown of) every other message in the conversation.
+// react-markdown sanitizes every URL before the `a` component renders: a
+// scheme-less destination with a port ("localhost:3000/files/report.pdf")
+// parses as an unknown "localhost:" protocol and is stripped to "", so the
+// anchor silently navigated to the app's own origin. Normalizing before the
+// sanitizer runs gives it a real http(s) URL to approve.
+function chatUrlTransform(url: string) {
+  return defaultUrlTransform(normalizeChatHref(url) ?? "");
+}
+
 const MessageView = memo(function MessageView({
   message,
   fallbackProvider,
@@ -1175,15 +1184,11 @@ const MessageView = memo(function MessageView({
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeHighlight]}
+                urlTransform={chatUrlTransform}
                 components={{
                   pre: CodeBlock,
-                  a: ({ children, href, ...props }) => (
-                    <a
-                      {...props}
-                      href={normalizeChatHref(href)}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
+                  a: ({ children, ...props }) => (
+                    <a {...props} target="_blank" rel="noreferrer">
                       {children}
                     </a>
                   ),
@@ -3921,8 +3926,9 @@ export default function Home() {
             />
             <div className="composer-footer">
               <span className="composer-hint">
-                {(ragStatus?.threadId === activeThread?.id &&
-                  ragStatus?.text) ||
+                {(isCompacting && "Compacting conversation history…") ||
+                  (ragStatus?.threadId === activeThread?.id &&
+                    ragStatus?.text) ||
                   (attachNote?.threadId === activeThread?.id &&
                     attachNote?.text) ||
                   `${MODE_COPY[mode].label} mode · ${MODE_COPY[mode].description}`}
@@ -3941,7 +3947,7 @@ export default function Home() {
                   </div>
                   <button
                     type="button"
-                    className="composer-icon"
+                    className={`composer-icon${isCompacting ? " is-compacting" : ""}`}
                     onClick={() => void compactThread(activeThread.id)}
                     disabled={streaming}
                     title={

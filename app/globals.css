@@ -1747,6 +1747,19 @@ select:focus-visible {
 .context-meter.is-warn span {
   background: var(--danger);
 }
+.composer-icon.is-compacting {
+  color: var(--accent);
+  animation: compacting-pulse 1.1s ease-in-out infinite;
+}
+@keyframes compacting-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
 .composer-icon,
 .composer-send {
   width: 36px;
