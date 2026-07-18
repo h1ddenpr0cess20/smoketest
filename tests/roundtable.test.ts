@@ -1,21 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
-  canAcceptReady,
   directlyAddressedParticipant,
   discussionLines,
   effectiveToolRequest,
-  forceAnotherTurn,
   initialProgress,
   latestDiscussionWindow,
   leastRecentlyHeard,
+  moderatorInstructions,
   moderatorPrompt,
   parseModeratorDecision,
   participantInstructions,
   participantPrompt,
-  recordModeratorFailure,
-  recordModeratorSuccess,
   recordParticipantTurn,
-  shouldPauseAfterModeratorFailure,
 } from "../lib/roundtable";
 import type { Message, ProviderConfig } from "../lib/types";
 import type { RoundtableParticipant } from "../lib/roundtable/types";
@@ -51,14 +47,14 @@ const settings: ProviderConfig = {
 };
 
 describe("roundtable moderator routing", () => {
-  it("parses strict NEXT and READY responses", () => {
+  it("parses strict NEXT responses and rejects attempts to end the chat", () => {
     expect(parseModeratorDecision("NEXT:architect", participants)).toEqual({
       type: "next",
       participantId: "architect",
     });
     expect(
       parseModeratorDecision("READY: Coverage is sufficient", participants),
-    ).toEqual({ type: "ready", reason: "Coverage is sufficient" });
+    ).toEqual({ type: "invalid" });
     expect(parseModeratorDecision("NEXT:unknown", participants)).toEqual({
       type: "invalid",
     });
@@ -96,37 +92,6 @@ describe("roundtable moderator routing", () => {
     expect(leastRecentlyHeard(participants, progress).id).toBe("architect");
     progress = recordParticipantTurn(progress, "architect");
     expect(leastRecentlyHeard(participants, progress).id).toBe("security");
-  });
-
-  it("pauses only after three consecutive moderator failures", () => {
-    let progress = initialProgress();
-    progress = recordModeratorFailure(progress);
-    progress = recordModeratorFailure(progress);
-    expect(shouldPauseAfterModeratorFailure(progress)).toBe(false);
-    progress = recordModeratorFailure(progress);
-    expect(shouldPauseAfterModeratorFailure(progress)).toBe(true);
-    expect(recordParticipantTurn(progress, "architect").moderatorFailures).toBe(
-      3,
-    );
-    expect(recordModeratorSuccess(progress).moderatorFailures).toBe(0);
-  });
-});
-
-describe("roundtable readiness", () => {
-  it("rejects READY until every participant has spoken", () => {
-    let progress = recordParticipantTurn(initialProgress(), "architect");
-    expect(canAcceptReady(progress, participants)).toBe(false);
-    progress = recordParticipantTurn(progress, "security");
-    expect(canAcceptReady(progress, participants)).toBe(true);
-  });
-
-  it("Continue forces at least one additional turn", () => {
-    let progress = recordParticipantTurn(initialProgress(), "architect");
-    progress = recordParticipantTurn(progress, "security");
-    progress = forceAnotherTurn(progress);
-    expect(canAcceptReady(progress, participants)).toBe(false);
-    progress = recordParticipantTurn(progress, "architect");
-    expect(canAcceptReady(progress, participants)).toBe(true);
   });
 });
 
@@ -189,6 +154,15 @@ describe("roundtable tool access", () => {
       mcpServers: [],
     });
   });
+
+  it("limits the moderator to routing instead of ending the discussion", () => {
+    const instructions = moderatorInstructions();
+    expect(instructions).toContain("You only route turns");
+    expect(instructions).toContain(
+      "Never end, pause, summarize, or synthesize",
+    );
+    expect(instructions).not.toContain("READY:");
+  });
 });
 
 describe("roundtable prompt context", () => {
@@ -211,13 +185,9 @@ describe("roundtable prompt context", () => {
     expect(participant).toContain("--- app.ts ---");
     expect(participant).not.toContain("Pat: line 6");
     expect(participant).not.toContain("Architect: line 7\n");
-    const moderator = moderatorPrompt(
-      { participants },
-      "Ship it",
-      window,
-      false,
-    );
-    expect(moderator).toContain("READY is not allowed");
+    const moderator = moderatorPrompt({ participants }, "Ship it", window);
+    expect(moderator).toContain("Select the participant");
+    expect(moderator).not.toContain("READY");
     expect(moderator).not.toContain("--- app.ts ---");
   });
 

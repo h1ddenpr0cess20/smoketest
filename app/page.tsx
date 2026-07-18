@@ -50,11 +50,9 @@ import type {
 } from "@/lib/roundtable/types";
 import { ROUNDTABLE_TOOL_KEYS } from "@/lib/roundtable/types";
 import {
-  canAcceptReady,
   directlyAddressedParticipant,
   discussionLines,
   effectiveToolRequest,
-  forceAnotherTurn,
   initialProgress,
   leastRecentlyHeard,
   moderatorInstructions,
@@ -62,10 +60,7 @@ import {
   parseModeratorDecision,
   participantInstructions,
   participantPrompt,
-  recordModeratorFailure,
-  recordModeratorSuccess,
   recordParticipantTurn,
-  shouldPauseAfterModeratorFailure,
   synthesisInstructions,
   synthesisPrompt,
   validParticipant,
@@ -2150,7 +2145,6 @@ export default function Home() {
                   config,
                   runtime.objective,
                   runtime.lines.slice(-6),
-                  canAcceptReady(runtime.progress, participants),
                 ),
               },
             ],
@@ -2166,25 +2160,11 @@ export default function Home() {
         setStreaming(false);
         if (runtime.stopRequested || controller.signal.aborted) break;
         if (moderator.error) {
-          runtime.progress = recordModeratorFailure(runtime.progress);
-          if (shouldPauseAfterModeratorFailure(runtime.progress)) {
-            setRoundtableError(
-              `Moderator failed three times: ${moderator.error}. Check the provider connection, then Continue.`,
-            );
-            setRoundtableStatus("paused");
-            return;
-          }
+          // Routing is advisory. A moderator transport failure must never end
+          // or pause the discussion; fairness fallback keeps the chat moving.
           participant = leastRecentlyHeard(participants, runtime.progress);
         } else {
-          runtime.progress = recordModeratorSuccess(runtime.progress);
           const decision = parseModeratorDecision(moderator.text, participants);
-          if (
-            decision.type === "ready" &&
-            canAcceptReady(runtime.progress, participants)
-          ) {
-            setRoundtableStatus("ready");
-            return;
-          }
           participant =
             decision.type === "next"
               ? participants.find((item) => item.id === decision.participantId)
@@ -2379,8 +2359,6 @@ export default function Home() {
     runtime.pauseRequested = false;
     runtime.stopRequested = false;
     runtime.synthesisRequested = false;
-    if (roundtableStatus === "ready")
-      runtime.progress = forceAnotherTurn(runtime.progress);
     roundtableRuntimeRef.current = runtime;
     setDraft("");
     setAttachments([]);
@@ -2404,8 +2382,6 @@ export default function Home() {
     if (!runtime || runtime.threadId !== activeThread.id)
       runtime = runtimeFromThread(activeThread);
     if (!runtime) return;
-    if (roundtableStatus === "ready")
-      runtime.progress = forceAnotherTurn(runtime.progress);
     runtime.pauseRequested = false;
     runtime.stopRequested = false;
     runtime.synthesisRequested = false;
@@ -3510,7 +3486,7 @@ export default function Home() {
                   {roundtableStatus === "pausing" && (
                     <button disabled>Pausing…</button>
                   )}
-                  {["paused", "ready", "stopped"].includes(roundtableStatus) &&
+                  {["paused", "stopped"].includes(roundtableStatus) &&
                     hasRoundtableDiscussion && (
                       <button onClick={continueRoundtable}>Continue</button>
                     )}
