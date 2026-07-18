@@ -1023,9 +1023,9 @@ export default function Home() {
     );
   }
 
-  function appendNotice(content: string) {
+  function appendNotice(content: string, isError = true) {
     if (!activeThread) return;
-    const notice: Message = { id: id(), role: "assistant", content, createdAt: Date.now(), error: true };
+    const notice: Message = { id: id(), role: "assistant", content, createdAt: Date.now(), error: isError };
     setThreads((current) =>
       current.map((thread) =>
         thread.id === activeThread.id
@@ -1063,7 +1063,7 @@ export default function Home() {
         } else {
           const enabled = command.enabled ?? !currentSettings.webSearch;
           updateProviderSettings({ webSearch: enabled });
-          appendNotice(`Web search ${enabled ? "enabled" : "disabled"}.`);
+          appendNotice(`Web search ${enabled ? "enabled" : "disabled"}.`, false);
         }
         setDraft("");
         return;
