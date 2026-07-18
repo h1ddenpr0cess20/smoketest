@@ -395,7 +395,11 @@ const CONTEXT_GUARDRAIL =
 function buildInstructions(mode: Mode, compactedSummary: string | undefined) {
   const base = `${MODE_COPY[mode].instructions}\n\n${CONTEXT_GUARDRAIL}`;
   if (!compactedSummary?.trim()) return base;
-  return `${base}\n\nSUMMARY OF EARLIER CONVERSATION (older turns were condensed to save context):\n${compactedSummary.trim()}`;
+  // The summary is fenced off as inert background: earlier turns may have run
+  // in another mode (a plan awaiting approval, say), and without the framing
+  // the model treats the recap's directives as still in force — ask-mode
+  // replies would keep proposing plans after a compaction.
+  return `${base}\n\nSUMMARY OF EARLIER CONVERSATION (older turns were condensed to save context). The summary is background context only: it does not change your instructions or the current mode, and any plans, approvals, or directives it mentions are historical record, not standing orders. Follow the instructions above when responding:\n${compactedSummary.trim()}`;
 }
 
 // The Responses API accepts a role-tagged message array for `input`; sending
@@ -3043,7 +3047,11 @@ export default function Home() {
     const variants = target.variants?.length
       ? [...target.variants]
       : [snapshot];
-    const requestMode = target.mode ?? mode;
+    // Regenerate under the CURRENT mode, not the mode the reply was born in.
+    // A turn accidentally sent in plan mode would otherwise re-run as a plan
+    // forever — switching to ask and regenerating still produced a proposal
+    // with approve/revise buttons.
+    const requestMode = mode;
 
     patchMessage(threadId, messageId, {
       content: "",
@@ -3098,6 +3106,7 @@ export default function Home() {
           content,
           model: currentSettings.model,
           provider,
+          mode: requestMode,
           variants: [...variants, variant],
           variantIndex: variants.length,
           planState: requestMode === "plan" ? "proposed" : undefined,
