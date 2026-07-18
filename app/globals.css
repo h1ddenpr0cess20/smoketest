@@ -534,10 +534,11 @@ select:focus-visible {
 
 /* ---------- Conversation feed ---------- */
 
+/* The page scrolls at the window level (topbar and composer are sticky), so
+   the conversation must never become its own scroll container — an
+   overflow/overscroll here swallows wheel events over the chat area. */
 .conversation {
   min-height: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
 }
 .message-list {
   width: min(860px, calc(100% - 44px));
