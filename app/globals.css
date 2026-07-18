@@ -393,9 +393,14 @@ select:focus-visible {
   min-width: 0;
   min-height: 100vh;
   display: grid;
+  /* Rows are assigned explicitly below: the planning-style bar (row 2) only
+     exists in plan mode, and auto-placement would shift the conversation and
+     composer up a row without it — putting the composer in the stretchy 1fr
+     row, where it floats above the bottom on short threads. */
   grid-template-rows: 68px auto minmax(0, 1fr) auto;
 }
 .topbar {
+  grid-row: 1;
   position: sticky;
   top: 0;
   z-index: 10;
@@ -559,6 +564,7 @@ select:focus-visible {
 }
 
 .plan-style-bar {
+  grid-row: 2;
   /* Pinned just under the sticky topbar so the Solo/Roundtable choice stays
      reachable while scrolling a long plan thread. */
   position: sticky;
@@ -608,6 +614,7 @@ select:focus-visible {
    the conversation must never become its own scroll container — an
    overflow/overscroll here swallows wheel events over the chat area. */
 .conversation {
+  grid-row: 3;
   min-height: 0;
 }
 .message-list {
@@ -1456,6 +1463,7 @@ select:focus-visible {
 /* ---------- Composer ---------- */
 
 .composer-zone {
+  grid-row: 4;
   position: sticky;
   bottom: 0;
   width: 100%;
