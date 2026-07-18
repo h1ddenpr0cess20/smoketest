@@ -108,6 +108,10 @@ import {
 import { generatedFileDownloadName } from "@/lib/downloads";
 import { normalizeChatHref } from "@/lib/chatLinks";
 import {
+  historyTokenBudgetFor,
+  windowMessagesByTokenBudget,
+} from "@/lib/tokenBudget";
+import {
   enqueueMessage,
   nextQueuedMessageForThread,
   removeQueuedMessage,
@@ -382,16 +386,21 @@ const CONTEXT_GUARDRAIL =
 // The Responses API accepts a role-tagged message array for `input`; sending
 // real roles instead of a flattened "USER:/ASSISTANT:" string preserves the
 // turn structure models are trained on.
-function toInputMessages(messages: Message[]) {
-  return messages
-    .filter((message) => message.content.trim() && !message.error)
-    .map((message) => ({ role: message.role, content: message.content }));
+function toInputMessages(messages: Message[], provider: ProviderId) {
+  const relevant = messages.filter(
+    (message) => message.content.trim() && !message.error,
+  );
+  return windowMessagesByTokenBudget(
+    relevant,
+    historyTokenBudgetFor(provider),
+  ).map((message) => ({ role: message.role, content: message.content }));
 }
 
 function buildInput(
   messages: Message[],
   next: string,
   attachments: Attachment[],
+  provider: ProviderId,
 ) {
   // Indexed-only attachments (directory trees living in the RAG index) carry
   // no inline text.
@@ -405,7 +414,10 @@ function buildInput(
   const content = files
     ? `ATTACHED CODE CONTEXT (read-only):\n${files}\n\n${next}`
     : next;
-  return [...toInputMessages(messages), { role: "user" as const, content }];
+  return [
+    ...toInputMessages(messages, provider),
+    { role: "user" as const, content },
+  ];
 }
 
 // Collapses a flat attachment list for display: files from one directory
@@ -2605,7 +2617,12 @@ export default function Home() {
         if (file.content.trim()) attachmentByName.set(file.name, file);
       }
       const inlineAttachments = [...attachmentByName.values()];
-      let requestInput = buildInput(priorMessages, prompt, inlineAttachments);
+      let requestInput = buildInput(
+        priorMessages,
+        prompt,
+        inlineAttachments,
+        provider,
+      );
       let ragLabels: string[] = [];
       if (currentProvider.local && currentSettings.localRag) {
         const embeddingModel = resolveEmbeddingModel(
@@ -2693,6 +2710,7 @@ export default function Home() {
                   priorMessages,
                   `${prompt}${block}`,
                   [],
+                  provider,
                 );
                 ragLabels = [
                   `Local RAG: ${retrieved.length} chunks · ${names.length} file${names.length === 1 ? "" : "s"}`,
@@ -2830,10 +2848,11 @@ export default function Home() {
               prior.slice(0, lastUserIndex),
               prior[lastUserIndex].content,
               [...attachmentByName.values()],
+              provider,
             ),
-            ...toInputMessages(prior.slice(lastUserIndex + 1)),
+            ...toInputMessages(prior.slice(lastUserIndex + 1), provider),
           ]
-        : toInputMessages(prior);
+        : toInputMessages(prior, provider);
     if (!input.length) return;
 
     const snapshot: MessageVariant = {

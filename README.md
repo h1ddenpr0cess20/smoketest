@@ -26,6 +26,7 @@ There are no Chat Completions adapters and no provider SDKs. The app sends the s
 - Streaming Responses API output
 - FIFO follow-up message queue while a response is streaming
 - Switch providers while keeping the conversation transcript, making it possible to plan with one model and execute with another
+- History sent to the provider is windowed to a token budget (larger for cloud providers, smaller for local models) so long threads don't grow the request payload without bound
 - File and directory attachments as inline context, with browser-side parsing and local retrieval for larger document sets
 - OpenAI and xAI provider tools, including web search, Code Interpreter, file search, and remote MCP; xAI also exposes X search
 - Download buttons for provider-generated Code Interpreter files when the response contains usable file metadata

@@ -22,6 +22,7 @@ export default defineConfig({
         "lib/rag.ts",
         "lib/roundtable/index.ts",
         "lib/stream.ts",
+        "lib/tokenBudget.ts",
         "lib/tools.ts",
       ],
       thresholds: {
