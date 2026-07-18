@@ -674,11 +674,13 @@ export default function Home() {
   const [attachNote, setAttachNote] = useState<{ threadId: string; text: string } | null>(null);
   const [ragStatus, setRagStatus] = useState<{ threadId: string; text: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [streamingId, setStreamingId] = useState("");
   const discoverSeq = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const dirRef = useRef<HTMLInputElement>(null);
+  const attachMenuRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -800,6 +802,17 @@ export default function Home() {
     node.style.height = "0px";
     node.style.height = `${Math.min(node.scrollHeight, 180)}px`;
   }, [draft]);
+
+  useEffect(() => {
+    if (!attachMenuOpen) return;
+    const onDown = (event: MouseEvent) => {
+      if (attachMenuRef.current && !attachMenuRef.current.contains(event.target as Node)) {
+        setAttachMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [attachMenuOpen]);
 
   function createThread() {
     const thread = blankThread();
@@ -1616,12 +1629,31 @@ export default function Home() {
                 onChange={(event) => void onFiles(event, true)}
                 {...({ webkitdirectory: "" } as Record<string, string>)}
               />
-              <button type="button" className="composer-icon" onClick={() => fileRef.current?.click()} title="Attach files" aria-label="Attach files">
-                <Icon name="paperclip" size={17} />
-              </button>
-              <button type="button" className="composer-icon" onClick={() => dirRef.current?.click()} title="Attach a folder" aria-label="Attach a folder">
-                <Icon name="folder" size={17} />
-              </button>
+              {/* One attach control; the picker split exists only because a
+                  single input can't offer both files and directories. */}
+              <div className="attach-menu" ref={attachMenuRef}>
+                <button
+                  type="button"
+                  className="composer-icon"
+                  onClick={() => setAttachMenuOpen((current) => !current)}
+                  title="Attach files or a folder"
+                  aria-label="Attach files or a folder"
+                  aria-haspopup="menu"
+                  aria-expanded={attachMenuOpen}
+                >
+                  <Icon name="paperclip" size={17} />
+                </button>
+                {attachMenuOpen && (
+                  <div className="attach-panel" role="menu">
+                    <button type="button" role="menuitem" onClick={() => { setAttachMenuOpen(false); fileRef.current?.click(); }}>
+                      <Icon name="paperclip" size={14} /> Files…
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => { setAttachMenuOpen(false); dirRef.current?.click(); }}>
+                      <Icon name="folder" size={14} /> Folder…
+                    </button>
+                  </div>
+                )}
+              </div>
               {streaming ? (
                 <button type="button" className="composer-send is-stop" onClick={() => abortRef.current?.abort()} title="Stop generating" aria-label="Stop generating">
                   <Icon name="stop" size={16} />
