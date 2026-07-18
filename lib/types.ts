@@ -53,6 +53,11 @@ export type Thread = {
   updatedAt: number;
   messages: Message[];
   roundtableConfig?: RoundtableConfig;
+  // A running summary that replaces older turns in the request history (see
+  // lib/compaction.ts). `compactedThroughId` is the id of the last message
+  // already folded into `compactedSummary`.
+  compactedSummary?: string;
+  compactedThroughId?: string;
 };
 
 export type ProviderConfig = {

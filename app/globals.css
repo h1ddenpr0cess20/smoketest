@@ -1729,6 +1729,24 @@ select:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.context-meter {
+  width: 40px;
+  height: 5px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--line);
+}
+.context-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--muted);
+  transition: width 200ms ease;
+}
+.context-meter.is-warn span {
+  background: var(--danger);
+}
 .composer-icon,
 .composer-send {
   width: 36px;

@@ -14,6 +14,7 @@ export default defineConfig({
       include: [
         "lib/chatLinks.ts",
         "lib/commands.ts",
+        "lib/compaction.ts",
         "lib/docPaths.ts",
         "lib/downloads.ts",
         "lib/export.ts",

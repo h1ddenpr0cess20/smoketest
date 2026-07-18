@@ -3,6 +3,7 @@ import type { Mode } from "./types";
 export type CommandAction =
   | { type: "new" }
   | { type: "mcp" }
+  | { type: "compact" }
   | { type: "search"; enabled: boolean | null }
   | { type: "effort"; effort: "low" | "medium" | "high" | null }
   | { type: "mode"; mode: Mode; prompt: string }
@@ -26,6 +27,10 @@ export const COMMANDS: { command: string; hint: string }[] = [
   { command: "/effort", hint: "Set reasoning effort: low, medium, or high" },
   { command: "/search", hint: "Toggle web search: on, off, or blank to flip" },
   { command: "/mcp", hint: "Open provider settings at the tool configuration" },
+  {
+    command: "/compact",
+    hint: "Summarize older turns to free up history budget",
+  },
 ];
 
 export function parseCommand(input: string): CommandAction | null {
@@ -39,6 +44,7 @@ export function parseCommand(input: string): CommandAction | null {
 
   if (command === "/new") return { type: "new" };
   if (command === "/mcp") return { type: "mcp" };
+  if (command === "/compact") return { type: "compact" };
   if (command === "/search") {
     // `null` asks the caller to flip the current setting, matching brainworm.
     return {
