@@ -31,6 +31,13 @@ describe("chat links", () => {
     );
   });
 
+  it("leaves bare filenames alone even when the extension is a real TLD", () => {
+    expect(normalizeChatHref("README.md")).toBe("README.md");
+    expect(normalizeChatHref("package.json")).toBe("package.json");
+    expect(normalizeChatHref("build.sh")).toBe("build.sh");
+    expect(normalizeChatHref("lib.rs")).toBe("lib.rs");
+  });
+
   it("preserves intentional relative paths", () => {
     expect(normalizeChatHref("docs/getting-started")).toBe(
       "docs/getting-started",

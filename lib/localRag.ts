@@ -128,7 +128,11 @@ export function restoreLocalDocIndex(threadId: string): Promise<number> {
     try {
       chunks = await loadDocChunks(threadId);
     } catch (error) {
+      // Leave `restored` unset so the next call retries — marking a transient
+      // storage failure as "restored empty" would hide the thread's documents
+      // until a full reload.
       console.error("Failed to restore document index:", error);
+      return index.chunks.length;
     }
     if (token !== index.restoreToken) return index.chunks.length;
     index.chunks = chunks;

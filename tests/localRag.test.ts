@@ -39,6 +39,16 @@ describe("restoreLocalDocIndex", () => {
     expect(loadDocChunks).toHaveBeenCalledTimes(1);
   });
 
+  it("retries after a failed restore instead of caching it as empty", async () => {
+    const threadId = "thread-flaky-storage";
+    loadDocChunks.mockRejectedValueOnce(new Error("storage unavailable"));
+
+    await restoreLocalDocIndex(threadId);
+    await restoreLocalDocIndex(threadId);
+
+    expect(loadDocChunks).toHaveBeenCalledTimes(2);
+  });
+
   it("restores again after the index is deleted", async () => {
     const threadId = "thread-deleted";
     await restoreLocalDocIndex(threadId);

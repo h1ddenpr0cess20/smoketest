@@ -2506,6 +2506,14 @@ export default function Home() {
   ): Promise<{ summary: string; throughId: string } | null> {
     const thread = threadsRef.current.find((item) => item.id === threadId);
     if (!thread) return null;
+    // Compaction takes over the streaming flag and abortRef; running it under
+    // an in-flight response would clobber both.
+    if (streaming) {
+      appendNotice(
+        "Wait for the current response to finish before compacting.",
+      );
+      return null;
+    }
     const tail = uncompactedMessages(
       thread.messages,
       thread.compactedThroughId,
@@ -2592,22 +2600,11 @@ export default function Home() {
     if (!prompt || !activeThread) return;
     let activeMode = modeOverride ?? mode;
 
-    if (streaming && !acceptingRoundtableInterjection) {
-      setMessageQueue((current) =>
-        enqueueMessage(current, {
-          id: id(),
-          threadId: activeThread.id,
-          content: prompt,
-          mode: activeMode,
-          attachments: pendingAttachments,
-        }),
-      );
-      setDraft("");
-      setAttachments([]);
-      setAttachNote(null);
-      return;
-    }
-
+    // Commands are parsed before the queue check so they run immediately even
+    // while a response is streaming — queueing "/new" as a message and
+    // executing it at some later, arbitrary moment would surprise. Mode
+    // commands that carry a prompt fall through so the prompt itself can
+    // queue below under the right mode.
     const command = parseCommand(prompt);
     if (command) {
       if (command.type === "new") {
@@ -2663,6 +2660,27 @@ export default function Home() {
         return;
       }
       prompt = command.prompt;
+    }
+
+    if (streaming && !acceptingRoundtableInterjection) {
+      setMessageQueue((current) =>
+        enqueueMessage(current, {
+          id: id(),
+          threadId: activeThread.id,
+          content: prompt,
+          mode: activeMode,
+          attachments: pendingAttachments,
+        }),
+      );
+      // A dequeued message that re-queues (streaming restarted underneath it)
+      // arrives with attachmentOverride set; the composer's live draft and
+      // attachments belong to a different, unsent message then.
+      if (attachmentOverride === undefined) {
+        setDraft("");
+        setAttachments([]);
+        setAttachNote(null);
+      }
+      return;
     }
 
     if (
@@ -2974,10 +2992,16 @@ export default function Home() {
     // prompts, so the thread's attachments are re-inlined into the last user
     // turn — without this, regenerating loses file access on every provider.
     const prior = activeThread.messages.slice(0, index);
-    const historyForRegenerate = uncompactedMessages(
-      prior,
-      activeThread.compactedThroughId,
-    );
+    // Regenerating a turn that predates the compaction marker re-runs against
+    // the full verbatim history (uncompactedMessages returns everything when
+    // the marker isn't in `prior`); the summary is dropped for that request so
+    // the model doesn't see those turns twice — condensed and verbatim.
+    const marker = activeThread.compactedThroughId;
+    const summaryForRegenerate =
+      !marker || prior.some((message) => message.id === marker)
+        ? activeThread.compactedSummary
+        : undefined;
+    const historyForRegenerate = uncompactedMessages(prior, marker);
     const lastUserIndex = historyForRegenerate.findLastIndex(
       (message) => message.role === "user" && !message.error,
     );
@@ -3034,10 +3058,7 @@ export default function Home() {
           apiKey: currentSettings.apiKey,
           model: currentSettings.model,
           input,
-          instructions: buildInstructions(
-            requestMode,
-            activeThread.compactedSummary,
-          ),
+          instructions: buildInstructions(requestMode, summaryForRegenerate),
           reasoningEffort: reasoning,
           priorityProcessing: currentSettings.priorityProcessing,
           tools: currentToolRequest(),
