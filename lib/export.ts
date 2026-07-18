@@ -50,9 +50,9 @@ const EXPORT_THEMES: Record<ExportTheme, Record<string, string>> = {
 };
 
 function speaker(message: Message) {
-  return message.role === "user"
-    ? "You"
-    : `smoketest${message.model ? ` (${message.model})` : ""}`;
+  const name =
+    message.displayName || (message.role === "user" ? "You" : "smoketest");
+  return `${name}${message.role === "assistant" && message.model ? ` (${message.model})` : ""}`;
 }
 
 function exportableMessages(thread: Thread) {
@@ -121,7 +121,11 @@ function htmlExport(thread: Thread, messages: Message[], theme: ExportTheme) {
   const messageSections = messages
     .map((message) => {
       const label = speaker(message);
-      const initial = message.role === "user" ? "Y" : "S";
+      const initial = (
+        message.displayName || (message.role === "user" ? "Y" : "S")
+      )
+        .slice(0, 1)
+        .toUpperCase();
       return `<article class="message ${message.role}">
         <div class="avatar" aria-hidden="true">${initial}</div>
         <div class="bubble">
@@ -215,6 +219,10 @@ export function renderExport(
           model: message.model,
           provider: message.provider,
           mode: message.mode,
+          roundtableRunId: message.roundtableRunId,
+          participantId: message.participantId,
+          displayName: message.displayName,
+          participantColor: message.participantColor,
           createdAt: stamp(message.createdAt),
           attachments: message.attachments?.map((file) => file.name),
         })),

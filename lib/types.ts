@@ -1,7 +1,9 @@
 import type { ProviderId } from "./providers";
+import type { RoundtableConfig } from "./roundtable/types";
 import type { GeneratedFile } from "./stream";
 
 export type Mode = "ask" | "plan" | "build";
+export type PlanStyle = "solo" | "roundtable";
 
 export type Attachment = {
   id: string;
@@ -38,6 +40,10 @@ export type Message = {
   variantIndex?: number;
   toolActivity?: string[];
   generatedFiles?: GeneratedFile[];
+  roundtableRunId?: string;
+  participantId?: string;
+  displayName?: string;
+  participantColor?: string;
 };
 
 export type Thread = {
@@ -46,6 +52,7 @@ export type Thread = {
   createdAt: number;
   updatedAt: number;
   messages: Message[];
+  roundtableConfig?: RoundtableConfig;
 };
 
 export type ProviderConfig = {
