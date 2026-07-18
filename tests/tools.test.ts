@@ -12,8 +12,18 @@ describe("provider tool building", () => {
     mcpServers: [{ label: "workspace", url: "http://localhost:9404/mcp" }],
   };
 
-  it("drops all tools for local providers", () => {
-    expect(buildTools("lmstudio", everything)).toEqual([]);
+  it("exposes only remote MCP for LM Studio", () => {
+    expect(buildTools("lmstudio", everything)).toEqual([
+      {
+        type: "mcp",
+        server_label: "workspace",
+        server_url: "http://localhost:9404/mcp",
+        require_approval: "never",
+      },
+    ]);
+  });
+
+  it("drops all tools for Ollama", () => {
     expect(buildTools("ollama", everything)).toEqual([]);
   });
 
