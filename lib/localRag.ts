@@ -58,7 +58,12 @@ const indexes = new Map<string, ThreadIndex>();
 function getIndex(threadId: string): ThreadIndex {
   let index = indexes.get(threadId);
   if (!index) {
-    index = { chunks: [], restored: false, restoreToken: 0, activeRestore: null };
+    index = {
+      chunks: [],
+      restored: false,
+      restoreToken: 0,
+      activeRestore: null,
+    };
     indexes.set(threadId, index);
   }
   return index;

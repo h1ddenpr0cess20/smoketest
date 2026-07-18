@@ -10,10 +10,7 @@ vi.mock("../lib/docChunkStorage", () => ({
   saveCachedFileChunks: vi.fn().mockResolvedValue(undefined),
 }));
 
-import {
-  deleteLocalDocIndex,
-  restoreLocalDocIndex,
-} from "../lib/localRag";
+import { deleteLocalDocIndex, restoreLocalDocIndex } from "../lib/localRag";
 
 describe("restoreLocalDocIndex", () => {
   beforeEach(() => {
