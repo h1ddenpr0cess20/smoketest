@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 180" role="img" aria-labelledby="title desc">
+  <title id="title">smoketest</title>
+  <desc id="desc">A pine tree silhouetted against smoke beside the smoketest wordmark.</desc>
+  <rect width="720" height="180" rx="26" fill="#0c0e0d"/>
+
+  <g transform="translate(27 26) scale(2)">
+    <rect width="64" height="64" rx="16" fill="#171a18"/>
+    <path fill="#666b66" d="M39.5 55.5c9.7-.8 16.5-6.2 16.5-14.1 0-5.2-2.8-8.2-6.5-11.2-2.6-2.1-2.6-4.8-.5-7.4 3.2-4 2-9.8-2.8-14.3.5 5.2-1.8 8.4-5.8 10.5-4.8 2.5-6.4 6.4-4.2 10.3 1.5 2.7 4.8 4 5.8 7.1 1.3 4-1.4 7.5-5.2 9.3l2.7 9.8Z"/>
+    <path fill="#eeeae0" fill-rule="evenodd" d="m24.2 10-8.3 15h4.6L13 37.2h5.2L9 51.5h12.2V57h6v-5.5h12.2l-9.2-14.3h5.2L28 25h4.5L24.2 10Z" clip-rule="evenodd"/>
+    <path fill="#d2764e" d="M9 51.5h30.4L36.5 56H9v-4.5Z"/>
+  </g>
+
+  <text x="188" y="90" fill="#e8e7df" font-family="Georgia, 'Times New Roman', serif" font-size="54" font-style="italic" font-weight="700">smoketest</text>
+  <text x="192" y="121" fill="#969a91" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="3.2">CROSS-PROVIDER CODING ASSISTANT</text>
+  <path stroke="#2e332f" d="M192 141h474"/>
+  <path stroke="#d2764e" stroke-width="3" d="M192 141h58"/>
+</svg>
