@@ -12,6 +12,9 @@ const STANDALONE_DIR = app.isPackaged
   ? path.join(process.resourcesPath, "standalone")
   : path.join(__dirname, "..", ".next", "standalone");
 const SERVER_ENTRY = path.join(STANDALONE_DIR, "server.js");
+const SERVER_NODE_MODULES = app.isPackaged
+  ? path.join(STANDALONE_DIR, "server_node_modules")
+  : path.join(STANDALONE_DIR, "node_modules");
 
 let mainWindow = null;
 let serverProcess = null;
@@ -22,11 +25,17 @@ function startServer() {
       `Build not found at ${SERVER_ENTRY}. Run "npm run build:electron" first.`,
     );
   }
+  if (!fs.existsSync(SERVER_NODE_MODULES)) {
+    throw new Error(`Server dependencies not found at ${SERVER_NODE_MODULES}.`);
+  }
   serverProcess = spawn(process.execPath, [SERVER_ENTRY], {
     cwd: STANDALONE_DIR,
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
+      NODE_PATH: [SERVER_NODE_MODULES, process.env.NODE_PATH]
+        .filter(Boolean)
+        .join(path.delimiter),
       PORT: String(PORT),
       HOSTNAME: "127.0.0.1",
       NODE_ENV: "production",
