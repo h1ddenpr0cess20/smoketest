@@ -8,7 +8,9 @@ const PORT = 4317;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const TITLEBAR_HEIGHT = 68;
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
-const STANDALONE_DIR = path.join(__dirname, "..", ".next", "standalone");
+const STANDALONE_DIR = app.isPackaged
+  ? path.join(process.resourcesPath, "standalone")
+  : path.join(__dirname, "..", ".next", "standalone");
 const SERVER_ENTRY = path.join(STANDALONE_DIR, "server.js");
 
 let mainWindow = null;
@@ -24,12 +26,16 @@ function startServer() {
     cwd: STANDALONE_DIR,
     env: {
       ...process.env,
+      ELECTRON_RUN_AS_NODE: "1",
       PORT: String(PORT),
       HOSTNAME: "127.0.0.1",
       NODE_ENV: "production",
       NEXT_TELEMETRY_DISABLED: "1",
     },
     stdio: "inherit",
+  });
+  serverProcess.on("error", (error) => {
+    console.error("Failed to start server:", error);
   });
   serverProcess.on("exit", () => {
     serverProcess = null;
