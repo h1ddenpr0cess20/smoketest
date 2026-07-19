@@ -1106,26 +1106,16 @@ function Icon({
   );
 }
 
-function WildfireMark() {
+// Renders the brand mark from the SVG asset pack (brand-assets/smoketest/svg),
+// swapping between the on-light and on-dark transparent variants to match theme.
+function BrandMark({ theme }: { theme: "smoke" | "ember" }) {
   return (
-    <svg
-      className="wildfire-mark"
-      viewBox="0 0 64 64"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path
-        className="brand-smoke"
-        d="M39.5 55.5c9.7-.8 16.5-6.2 16.5-14.1 0-5.2-2.8-8.2-6.5-11.2-2.6-2.1-2.6-4.8-.5-7.4 3.2-4 2-9.8-2.8-14.3.5 5.2-1.8 8.4-5.8 10.5-4.8 2.5-6.4 6.4-4.2 10.3 1.5 2.7 4.8 4 5.8 7.1 1.3 4-1.4 7.5-5.2 9.3l2.7 9.8Z"
-      />
-      <path
-        className="brand-tree"
-        fillRule="evenodd"
-        d="m24.2 10-8.3 15h4.6L13 37.2h5.2L9 51.5h12.2V57h6v-5.5h12.2l-9.2-14.3h5.2L28 25h4.5L24.2 10Z"
-        clipRule="evenodd"
-      />
-      <path className="brand-ember" d="M9 51.5h30.4L36.5 56H9v-4.5Z" />
-    </svg>
+    // eslint-disable-next-line @next/next/no-img-element -- fixed local SVG icon, not an optimizable content image
+    <img
+      className="brand-mark-img"
+      src={theme === "ember" ? "/mark-dark.svg" : "/mark-light.svg"}
+      alt=""
+    />
   );
 }
 
@@ -3818,7 +3808,7 @@ export default function Home() {
       <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
         <div className="brand-row">
           <div className="brand-mark" aria-hidden="true">
-            <WildfireMark />
+            <BrandMark theme={theme} />
           </div>
           <div>
             <strong>smoketest</strong>
@@ -4166,7 +4156,7 @@ export default function Home() {
           ) : !activeThread?.messages.length ? (
             <div className="empty-state">
               <div className="splash-mark" aria-hidden="true">
-                <WildfireMark />
+                <BrandMark theme={theme} />
               </div>
               <p className="overline">
                 RESPONSES API · FOUR PROVIDERS · ONE WORKSPACE
