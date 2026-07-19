@@ -1396,6 +1396,7 @@ export default function Home() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const queuedSubmitRef = useRef<(message: QueuedMessage) => void>(() => {});
+  const composerZoneRef = useRef<HTMLDivElement>(null);
 
   const activeThread = useMemo(
     () => threads.find((thread) => thread.id === activeId) ?? threads[0],
@@ -1574,6 +1575,35 @@ export default function Home() {
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [attachMenuOpen]);
+
+  // Mobile drawer is an overlay, not part of the page flow, so background
+  // scroll must be locked while it's open or touches leak through to the
+  // conversation behind it.
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [sidebarOpen]);
+
+  // The mobile mode/theme docks float above the composer, whose height
+  // varies with queued messages, roundtable controls, and multi-line drafts.
+  // Track it in a CSS var so the docks never overlap it.
+  useEffect(() => {
+    const node = composerZoneRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const setHeight = () =>
+      document.documentElement.style.setProperty(
+        "--composer-h",
+        `${node.offsetHeight}px`,
+      );
+    setHeight();
+    const observer = new ResizeObserver(setHeight);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   function createThread() {
     stopRoundtable("stopped");
@@ -3773,7 +3803,7 @@ export default function Home() {
           )}
         </div>
 
-        <div className="composer-zone">
+        <div className="composer-zone" ref={composerZoneRef}>
           {mode === "plan" &&
             planStyle === "roundtable" &&
             roundtableConfig &&

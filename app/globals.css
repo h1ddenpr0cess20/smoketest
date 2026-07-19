@@ -986,7 +986,9 @@ select:focus-visible {
 }
 .roundtable-setup-foot {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
+  gap: 4px 12px;
   margin-top: 12px;
   color: var(--faint);
   font: 9.5px var(--font-mono);
@@ -2361,17 +2363,20 @@ select:focus-visible {
     grid-template-columns: 1fr;
   }
   .sidebar {
+    /* Animating `left` instead of `transform` keeps the sidebar from
+       becoming a containing block for its own position:fixed descendants
+       (the theme switch below) — a transform on an ancestor hijacks fixed
+       children onto its own box instead of the viewport. */
     position: fixed;
-    left: 0;
+    left: -324px;
     top: 0;
     width: 284px;
-    transform: translateX(-102%);
-    transition: transform 0.22s ease;
+    transition: left 0.22s ease;
     box-shadow: 20px 0 60px var(--shadow-heavy);
     background: var(--bg);
   }
   .sidebar-open {
-    transform: translateX(0);
+    left: 0;
   }
   .sidebar-scrim {
     position: fixed;
@@ -2391,11 +2396,17 @@ select:focus-visible {
     grid-template-columns: auto minmax(0, 1fr) auto;
     padding: 0 14px;
     gap: 10px;
+    /* A filter on an ancestor also hijacks position:fixed descendants onto
+       its own box instead of the viewport, which broke .mode-switch below. */
+    backdrop-filter: none;
   }
   .theme-switch {
     position: fixed;
     right: 12px;
-    bottom: 132px;
+    /* Tracks the actual composer height (set in JS via ResizeObserver) so
+       the dock clears it regardless of queued messages, roundtable
+       controls, or a multi-line draft. */
+    bottom: calc(var(--composer-h, 112px) + 20px);
     z-index: 12;
     padding: 2px;
     border: 1px solid var(--line);
@@ -2406,7 +2417,7 @@ select:focus-visible {
   .mode-switch {
     position: fixed;
     left: 50%;
-    bottom: 132px;
+    bottom: calc(var(--composer-h, 112px) + 20px);
     transform: translateX(-50%);
     z-index: 12;
     box-shadow: 0 8px 30px var(--shadow);
@@ -2528,10 +2539,6 @@ select:focus-visible {
   }
   .composer-foot {
     display: none;
-  }
-  .mode-switch,
-  .theme-switch {
-    bottom: 96px;
   }
   .settings-panel {
     padding: 17px;
