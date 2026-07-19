@@ -76,12 +76,12 @@ async function createWindow() {
     minWidth: 420,
     minHeight: 500,
     icon: path.join(__dirname, "icon.png"),
-    backgroundColor: "#0c0e0d",
+    backgroundColor: "#f4f3ed",
     autoHideMenuBar: true,
     titleBarStyle: "hidden",
     titleBarOverlay: {
-      color: "#0c0e0d",
-      symbolColor: "#e8e7df",
+      color: "#f4f3ed",
+      symbolColor: "#242724",
       height: TITLEBAR_HEIGHT,
     },
     webPreferences: {
