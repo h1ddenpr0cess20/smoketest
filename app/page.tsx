@@ -1396,7 +1396,6 @@ export default function Home() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const queuedSubmitRef = useRef<(message: QueuedMessage) => void>(() => {});
-  const composerZoneRef = useRef<HTMLDivElement>(null);
 
   const activeThread = useMemo(
     () => threads.find((thread) => thread.id === activeId) ?? threads[0],
@@ -1587,23 +1586,6 @@ export default function Home() {
       document.body.style.overflow = previous;
     };
   }, [sidebarOpen]);
-
-  // The mobile mode/theme docks float above the composer, whose height
-  // varies with queued messages, roundtable controls, and multi-line drafts.
-  // Track it in a CSS var so the docks never overlap it.
-  useEffect(() => {
-    const node = composerZoneRef.current;
-    if (!node || typeof ResizeObserver === "undefined") return;
-    const setHeight = () =>
-      document.documentElement.style.setProperty(
-        "--composer-h",
-        `${node.offsetHeight}px`,
-      );
-    setHeight();
-    const observer = new ResizeObserver(setHeight);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
 
   function createThread() {
     stopRoundtable("stopped");
@@ -3803,7 +3785,7 @@ export default function Home() {
           )}
         </div>
 
-        <div className="composer-zone" ref={composerZoneRef}>
+        <div className="composer-zone">
           {mode === "plan" &&
             planStyle === "roundtable" &&
             roundtableConfig &&
