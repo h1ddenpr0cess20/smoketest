@@ -1,6 +1,6 @@
 {
   "name": "smoketest",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "A cross-provider coding assistant for Responses API compatible providers.",
   "main": "electron/main.cjs",
