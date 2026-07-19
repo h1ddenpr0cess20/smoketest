@@ -172,3 +172,83 @@ describe("Responses proxy memory tool round trip", () => {
     expect(response.status).toBe(400);
   });
 });
+
+describe("Responses proxy skill tool round trip", () => {
+  it("appends the skill tools when requested", async () => {
+    const upstream = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("data: [DONE]\n\n", {
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+    await POST(
+      new NextRequest("http://localhost/api/responses", {
+        method: "POST",
+        body: JSON.stringify({
+          provider: "openai",
+          apiKey: "key",
+          model: "gpt-test",
+          input: "use my frontend skill",
+          tools: { skills: true, skillResources: true },
+        }),
+      }),
+    );
+    const body = JSON.parse(String(upstream.mock.calls[0][1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(
+      (body.tools as Array<{ name?: string }>).map((tool) => tool.name),
+    ).toEqual(["activate_skill", "read_skill_resource"]);
+  });
+
+  it("accepts an activate_skill function_call/output round trip in input", async () => {
+    const upstream = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("data: [DONE]\n\n", {
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+    const response = await POST(
+      new NextRequest("http://localhost/api/responses", {
+        method: "POST",
+        body: JSON.stringify({
+          provider: "openai",
+          apiKey: "key",
+          model: "gpt-test",
+          input: [
+            { role: "user", content: "use my frontend skill" },
+            {
+              type: "function_call",
+              call_id: "call_1",
+              name: "activate_skill",
+              arguments: '{"skill_id":"user:frontend"}',
+            },
+            {
+              type: "function_call_output",
+              call_id: "call_1",
+              output: '{"ok":true}',
+            },
+          ],
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = JSON.parse(String(upstream.mock.calls[0][1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body.input).toEqual([
+      { role: "user", content: "use my frontend skill" },
+      {
+        type: "function_call",
+        call_id: "call_1",
+        name: "activate_skill",
+        arguments: '{"skill_id":"user:frontend"}',
+      },
+      {
+        type: "function_call_output",
+        call_id: "call_1",
+        output: '{"ok":true}',
+      },
+    ]);
+  });
+});

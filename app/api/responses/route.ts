@@ -8,6 +8,7 @@ import {
 import {
   buildTools,
   isMemoryToolName,
+  isSkillToolName,
   isValidMcpUrl,
   MCP_LABEL_PATTERN,
   type ToolRequest,
@@ -42,6 +43,8 @@ function sanitizeToolRequest(value: unknown): ToolRequest {
     vectorStoreIds?: unknown;
     mcpServers?: unknown;
     memory?: unknown;
+    skills?: unknown;
+    skillResources?: unknown;
   };
   const vectorStoreIds = Array.isArray(raw.vectorStoreIds)
     ? raw.vectorStoreIds
@@ -72,11 +75,13 @@ function sanitizeToolRequest(value: unknown): ToolRequest {
     vectorStoreIds,
     mcpServers,
     memory: raw.memory === true,
+    skills: raw.skills === true,
+    skillResources: raw.skillResources === true,
   };
 }
 
 type InputMessage = { role: "user" | "assistant"; content: string };
-// The two extra item shapes a memory tool round-trip appends to `input`.
+// The two extra item shapes a memory/skill tool round-trip appends to `input`.
 type FunctionCallInput = {
   type: "function_call";
   call_id: string;
@@ -100,7 +105,7 @@ function sanitizeFunctionCallItem(
     item.type === "function_call" &&
     typeof callId === "string" &&
     callId &&
-    isMemoryToolName(item.name) &&
+    (isMemoryToolName(item.name) || isSkillToolName(item.name)) &&
     typeof item.arguments === "string" &&
     item.arguments.length <= MAX_FUNCTION_CALL_FIELD_LENGTH
   ) {
@@ -128,7 +133,7 @@ function sanitizeFunctionCallItem(
 }
 
 // `input` is a plain string, or a role-tagged message array that may also
-// carry function_call/function_call_output items from a memory tool round trip.
+// carry function_call/function_call_output items from a memory/skill tool round trip.
 function sanitizeInput(value: unknown): string | InputItem[] | null {
   if (typeof value === "string") return value.trim() || null;
   if (!Array.isArray(value) || !value.length) return null;

@@ -77,6 +77,7 @@ import {
   TOOL_SUPPORT,
   isMcpUrlAllowedForProvider,
   isMemoryToolName,
+  isSkillToolName,
   isValidMcpUrl,
   type ToolRequest,
 } from "@/lib/tools";
@@ -92,6 +93,23 @@ import {
   withMemoryLimitApplied,
   withMemoryRemovedAt,
 } from "@/lib/memory";
+import {
+  enabledSkills,
+  parseSkillMarkdown,
+  restoreSeededSkillNames,
+  restoreSkillList,
+  restoreSkillPreferences,
+  runSkillToolCall,
+  serializeSkillMarkdown,
+  skillsForPrompt,
+  withSkillAdded,
+  withSkillPreferenceRemoved,
+  withSkillPreferenceSet,
+  withSkillRemoved,
+  type SkillDefinition,
+} from "@/lib/skills";
+import { EXAMPLE_SKILLS } from "@/lib/exampleSkills";
+import { titlebarColorsForTheme } from "@/lib/desktopTitlebar";
 import {
   buildReferenceBlock,
   buildRetrievalQuery,
@@ -153,6 +171,9 @@ const STORAGE = {
   autoCompact: "smoketest.auto-compact.v1",
   memoryConfig: "smoketest.memory-config.v1",
   memories: "smoketest.memories.v1",
+  skills: "smoketest.skills.v1",
+  skillPreferences: "smoketest.skill-preferences.v1",
+  skillsSeededExamples: "smoketest.skills-seeded.v1",
 } as const;
 
 const ROUNDTABLE_COLORS = [
@@ -675,8 +696,14 @@ type MemoryToolContext = {
   onMemoriesChange: (next: string[]) => void;
 };
 
+// Lookups span every skill, not just enabled ones — one disabled mid-turn can still resolve.
+type SkillToolContext = {
+  enabled: boolean;
+  getSkills: () => SkillDefinition[];
+};
+
 // Caps function-call round trips per assistant turn.
-const MAX_MEMORY_TOOL_TURNS = 4;
+const MAX_TOOL_LOOP_TURNS = 4;
 
 type RoundtableRuntime = {
   threadId: string;
@@ -847,21 +874,20 @@ async function runResponsesTurn(
   }
 }
 
-// Wraps runResponsesTurn with the remember/forget tool loop: a memory tool
-// call is executed locally and the call/result pair fed back for a
-// follow-up request, up to MAX_MEMORY_TOOL_TURNS times.
+// Wraps runResponsesTurn with the memory and skill tool loop, up to MAX_TOOL_LOOP_TURNS times.
 async function streamAssistant(
   payload: StreamPayload,
   signal: AbortSignal,
   onUpdate: (text: string, toolActivity: string[]) => void,
   memoryCtx?: MemoryToolContext,
+  skillCtx?: SkillToolContext,
 ): Promise<StreamOutcome> {
   let workingInput = payload.input;
   let priorText = "";
   const activityLog: string[] = [];
   const fileList: GeneratedFile[] = [];
 
-  for (let turn = 0; turn < MAX_MEMORY_TOOL_TURNS; turn++) {
+  for (let turn = 0; turn < MAX_TOOL_LOOP_TURNS; turn++) {
     const result = await runResponsesTurn(
       { ...payload, input: workingInput },
       signal,
@@ -898,14 +924,12 @@ async function streamAssistant(
       };
     }
 
-    const pendingCalls = result.functionCalls.filter((call) =>
-      isMemoryToolName(call.name),
+    const pendingCalls = result.functionCalls.filter(
+      (call) =>
+        (memoryCtx?.enabled && isMemoryToolName(call.name)) ||
+        (skillCtx?.enabled && isSkillToolName(call.name)),
     );
-    if (
-      !memoryCtx?.enabled ||
-      !pendingCalls.length ||
-      turn === MAX_MEMORY_TOOL_TURNS - 1
-    ) {
+    if (!pendingCalls.length || turn === MAX_TOOL_LOOP_TURNS - 1) {
       return {
         text: priorText,
         toolActivity: activityLog,
@@ -913,16 +937,26 @@ async function streamAssistant(
       };
     }
 
-    let currentMemories = memoryCtx.getMemories();
+    let currentMemories = memoryCtx?.getMemories() ?? [];
     const appended: ResponsesInputItem[] = [];
     for (const call of pendingCalls) {
-      const { output, memories: nextMemories } = runMemoryToolCall(
-        call.name,
-        call.arguments,
-        currentMemories,
-        memoryCtx.limit,
-      );
-      currentMemories = nextMemories;
+      let output: string;
+      if (isMemoryToolName(call.name)) {
+        const memoryResult = runMemoryToolCall(
+          call.name,
+          call.arguments,
+          currentMemories,
+          memoryCtx!.limit,
+        );
+        currentMemories = memoryResult.memories;
+        output = memoryResult.output;
+      } else {
+        output = runSkillToolCall(
+          call.name,
+          call.arguments,
+          skillCtx!.getSkills(),
+        ).output;
+      }
       appended.push(
         {
           type: "function_call",
@@ -933,7 +967,7 @@ async function streamAssistant(
         { type: "function_call_output", call_id: call.callId, output },
       );
     }
-    memoryCtx.onMemoriesChange(currentMemories);
+    memoryCtx?.onMemoriesChange(currentMemories);
     workingInput = [...workingInput, ...appended];
   }
 
@@ -961,6 +995,7 @@ function Icon({
     | "copy"
     | "branch"
     | "download"
+    | "upload"
     | "folder"
     | "compress";
   size?: number;
@@ -1038,6 +1073,13 @@ function Icon({
         <path d="M15 3v4a2 2 0 0 1 2 2h4" />
         <path d="M9 21v-4a2 2 0 0 0-2-2H3" />
         <path d="M15 21v-4a2 2 0 0 0 2-2h4" />
+      </>
+    ),
+    upload: (
+      <>
+        <path d="M12 14V3" />
+        <path d="m7 8 5-5 5 5" />
+        <path d="M5 21h14" />
       </>
     ),
   };
@@ -1518,6 +1560,11 @@ export default function Home() {
   const [memoryLimit, setMemoryLimit] = useState(DEFAULT_MEMORY_LIMIT);
   const [memories, setMemories] = useState<string[]>([]);
   const [memoryDraft, setMemoryDraft] = useState("");
+  const [skills, setSkills] = useState<SkillDefinition[]>([]);
+  const [skillPreferences, setSkillPreferences] = useState<
+    Record<string, boolean>
+  >({});
+  const [seededSkillNames, setSeededSkillNames] = useState<string[]>([]);
   // Attachment status lines are keyed by thread so switching sessions shows
   // only the active thread's status without an effect-driven reset.
   const [attachNote, setAttachNote] = useState<{
@@ -1537,8 +1584,10 @@ export default function Home() {
   const roundtableDrivingRef = useRef<RoundtableRuntime | null>(null);
   const threadsRef = useRef<Thread[]>([]);
   const memoriesRef = useRef<string[]>([]);
+  const skillsRef = useRef<SkillDefinition[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const dirRef = useRef<HTMLInputElement>(null);
+  const skillFileRef = useRef<HTMLInputElement>(null);
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const indexingRef = useRef<Promise<unknown> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -1555,6 +1604,10 @@ export default function Home() {
   useEffect(() => {
     threadsRef.current = threads;
   }, [threads]);
+
+  useEffect(() => {
+    skillsRef.current = skills;
+  }, [skills]);
 
   useEffect(() => {
     const restoredThreads = (() => {
@@ -1621,6 +1674,57 @@ export default function Home() {
         return [];
       }
     })();
+    const restoredSkills = (() => {
+      try {
+        return restoreSkillList(
+          JSON.parse(localStorage.getItem(STORAGE.skills) || "null"),
+        );
+      } catch {
+        return [];
+      }
+    })();
+    const restoredSkillPreferences = (() => {
+      try {
+        return restoreSkillPreferences(
+          JSON.parse(localStorage.getItem(STORAGE.skillPreferences) || "null"),
+        );
+      } catch {
+        return {};
+      }
+    })();
+    const restoredSeededSkillNames = (() => {
+      try {
+        return restoreSeededSkillNames(
+          JSON.parse(
+            localStorage.getItem(STORAGE.skillsSeededExamples) || "null",
+          ),
+        );
+      } catch {
+        return [];
+      }
+    })();
+    // Seeds bundled example skills once each, by name, so deleting one doesn't resurrect it.
+    const seededSkillNameSet = new Set(restoredSeededSkillNames);
+    let seededSkills = restoredSkills;
+    let seededSkillPreferences = restoredSkillPreferences;
+    for (const markdown of EXAMPLE_SKILLS) {
+      try {
+        const input = parseSkillMarkdown(markdown);
+        if (seededSkillNameSet.has(input.name)) continue;
+        if (!seededSkills.some((skill) => skill.name === input.name)) {
+          const added = withSkillAdded(seededSkills, input);
+          seededSkills = added.skills;
+          seededSkillPreferences = withSkillPreferenceSet(
+            seededSkillPreferences,
+            added.skill.id,
+            true,
+          );
+        }
+        seededSkillNameSet.add(input.name);
+      } catch {
+        // Bundled examples are static and should always parse.
+      }
+    }
     queueMicrotask(() => {
       if (restoredSettings) setSettings(restoredSettings);
       if (restoredProvider) setProvider(restoredProvider);
@@ -1636,6 +1740,10 @@ export default function Home() {
       }
       memoriesRef.current = restoredMemories;
       setMemories(restoredMemories);
+      skillsRef.current = seededSkills;
+      setSkills(seededSkills);
+      setSkillPreferences(seededSkillPreferences);
+      setSeededSkillNames([...seededSkillNameSet]);
       setThreads(restoredThreads);
       setActiveId(restoredThreads[0].id);
       setRoundtableStatus(
@@ -1676,6 +1784,15 @@ export default function Home() {
         JSON.stringify({ enabled: memoryEnabled, limit: memoryLimit }),
       );
       localStorage.setItem(STORAGE.memories, JSON.stringify(memories));
+      localStorage.setItem(STORAGE.skills, JSON.stringify(skills));
+      localStorage.setItem(
+        STORAGE.skillPreferences,
+        JSON.stringify(skillPreferences),
+      );
+      localStorage.setItem(
+        STORAGE.skillsSeededExamples,
+        JSON.stringify(seededSkillNames),
+      );
     } catch {
       // Storage unavailable — settings stay in memory for this session.
     }
@@ -1691,8 +1808,19 @@ export default function Home() {
     memoryEnabled,
     memoryLimit,
     memories,
+    skills,
+    skillPreferences,
+    seededSkillNames,
     hydrated,
   ]);
+
+  // Desktop app: tag body for the drag-region CSS and sync the title-bar overlay colors.
+  useEffect(() => {
+    const bridge = window.smoketestDesktop;
+    if (!bridge) return;
+    document.body.classList.add("desktop-app", `platform-${bridge.platform}`);
+    bridge.setTitleBarColors(titlebarColorsForTheme(theme)).catch(() => {});
+  }, [theme]);
 
   // Auto-scroll only while the reader is already near the bottom; scrolling up
   // to reread must not be fought by the stream (wordmark's shouldAutoScroll).
@@ -1875,6 +2003,7 @@ export default function Home() {
   }
 
   function currentToolRequest(): ToolRequest {
+    const activeSkills = enabledSkills(skills, skillPreferences);
     return {
       webSearch: currentSettings.webSearch,
       xSearch: currentSettings.xSearch,
@@ -1888,6 +2017,8 @@ export default function Home() {
         .filter((server) => server.enabled)
         .map(({ label, url }) => ({ label, url })),
       memory: memoryEnabled,
+      skills: activeSkills.length > 0,
+      skillResources: activeSkills.some((skill) => skill.resources.length > 0),
     };
   }
 
@@ -1924,13 +2055,65 @@ export default function Home() {
     };
   }
 
-  function instructionsWithMemory(
+  function skillToolContext() {
+    return {
+      enabled: enabledSkills(skills, skillPreferences).length > 0,
+      getSkills: () => skillsRef.current,
+    };
+  }
+
+  // Reads skillsRef directly so uploading several files in sequence sees each prior addition.
+  async function importSkillFile(file: File) {
+    try {
+      const text = await file.text();
+      const input = parseSkillMarkdown(text);
+      const added = withSkillAdded(skillsRef.current, input);
+      skillsRef.current = added.skills;
+      setSkills(added.skills);
+      setSkillPreferences((current) =>
+        withSkillPreferenceSet(current, added.skill.id, true),
+      );
+    } catch {
+      // Malformed SKILL.md uploads are skipped.
+    }
+  }
+
+  async function handleSkillUpload(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    for (const file of files) {
+      await importSkillFile(file);
+    }
+  }
+
+  function removeSkill(id: string) {
+    skillsRef.current = withSkillRemoved(skillsRef.current, id);
+    setSkills(skillsRef.current);
+    setSkillPreferences((current) => withSkillPreferenceRemoved(current, id));
+  }
+
+  function exportSkill(skill: SkillDefinition) {
+    const blob = new Blob([serializeSkillMarkdown(skill)], {
+      type: "text/markdown",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${skill.id.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase()}.SKILL.md`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function buildFullInstructions(
     activeModeValue: Mode,
     summary: string | undefined,
   ) {
-    const base = buildInstructions(activeModeValue, summary);
-    if (!memoryEnabled || !memories.length) return base;
-    return `${base}${memoriesForPrompt(memories)}`;
+    let instructions = buildInstructions(activeModeValue, summary);
+    if (memoryEnabled && memories.length)
+      instructions += memoriesForPrompt(memories);
+    const activeSkills = enabledSkills(skills, skillPreferences);
+    if (activeSkills.length) instructions += skillsForPrompt(activeSkills);
+    return instructions;
   }
 
   // Discover models at runtime — on load, on provider switch, and when the API
@@ -3143,7 +3326,7 @@ export default function Home() {
           apiKey: currentSettings.apiKey,
           model: currentSettings.model,
           input: requestInput,
-          instructions: instructionsWithMemory(activeMode, compactedSummary),
+          instructions: buildFullInstructions(activeMode, compactedSummary),
           reasoningEffort: reasoning,
           priorityProcessing: currentSettings.priorityProcessing,
           tools: currentToolRequest(),
@@ -3155,6 +3338,7 @@ export default function Home() {
             toolActivity: [...ragLabels, ...usedTools],
           }),
         memoryToolContext(),
+        skillToolContext(),
       );
       const finalActivity = [...ragLabels, ...outcome.toolActivity];
       if (controller.signal.aborted) {
@@ -3306,7 +3490,7 @@ export default function Home() {
           apiKey: currentSettings.apiKey,
           model: currentSettings.model,
           input,
-          instructions: instructionsWithMemory(
+          instructions: buildFullInstructions(
             requestMode,
             summaryForRegenerate,
           ),
@@ -3321,6 +3505,7 @@ export default function Home() {
             toolActivity: usedTools,
           }),
         memoryToolContext(),
+        skillToolContext(),
       );
       if (controller.signal.aborted || outcome.error) {
         patchMessage(threadId, messageId, {
@@ -4825,6 +5010,87 @@ export default function Home() {
                   )}
                 </>
               )}
+            </div>
+            <div className="tools-section">
+              <span className="overline">SKILLS</span>
+              <p className="tools-empty">
+                Named instruction packages the assistant loads on demand — it
+                sees each enabled skill&apos;s name and description, and calls a
+                tool to pull the full instructions when a request matches.
+              </p>
+              {skills.length ? (
+                <div className="skill-list">
+                  {skills.map((skill) => (
+                    <div className="skill-row" key={skill.id}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(skillPreferences[skill.id])}
+                          onChange={(event) =>
+                            setSkillPreferences((current) =>
+                              withSkillPreferenceSet(
+                                current,
+                                skill.id,
+                                event.target.checked,
+                              ),
+                            )
+                          }
+                        />
+                        <span>
+                          <strong>{skill.name}</strong>
+                          {skill.resources.length ? (
+                            <span className="skill-badge">
+                              {skill.resources.length === 1
+                                ? "1 resource"
+                                : `${skill.resources.length} resources`}
+                            </span>
+                          ) : null}
+                          {skill.description && (
+                            <small>{skill.description}</small>
+                          )}
+                        </span>
+                      </label>
+                      <div className="skill-row-actions">
+                        <button
+                          className="icon-button"
+                          onClick={() => exportSkill(skill)}
+                          aria-label={`Export ${skill.name}`}
+                          title={`Export ${skill.name} as SKILL.md`}
+                        >
+                          <Icon name="download" size={13} />
+                        </button>
+                        <button
+                          className="icon-button"
+                          onClick={() => removeSkill(skill.id)}
+                          aria-label={`Remove ${skill.name}`}
+                        >
+                          <Icon name="trash" size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="tools-empty">
+                  No skills yet. Upload a SKILL.md file to get started.
+                </p>
+              )}
+              <div className="connection-row">
+                <button
+                  className="test-button"
+                  onClick={() => skillFileRef.current?.click()}
+                >
+                  <Icon name="upload" size={15} /> Upload skill
+                </button>
+              </div>
+              <input
+                ref={skillFileRef}
+                type="file"
+                accept=".md,.markdown,text/markdown"
+                multiple
+                hidden
+                onChange={(event) => void handleSkillUpload(event)}
+              />
             </div>
             <div className="connection-row">
               <button

@@ -173,6 +173,8 @@ export function toolActivity(event: ResponseStreamEvent): ToolActivity | null {
 function functionCallLabel(name: string | undefined): string {
   if (name === "remember") return "Remember";
   if (name === "forget") return "Forget";
+  if (name === "activate_skill") return "Activate skill";
+  if (name === "read_skill_resource") return "Read skill resource";
   return `Function: ${name || "call"}`;
 }
 

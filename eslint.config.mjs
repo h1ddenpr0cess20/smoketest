@@ -12,5 +12,12 @@ export default defineConfig([
       reportUnusedDisableDirectives: "error",
     },
   },
-  globalIgnores([".next/**", "coverage/**", "out/**", "next-env.d.ts"]),
+  globalIgnores([
+    ".next/**",
+    "coverage/**",
+    "out/**",
+    "next-env.d.ts",
+    "electron/**",
+    "scripts/**",
+  ]),
 ]);

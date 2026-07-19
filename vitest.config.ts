@@ -23,6 +23,7 @@ export default defineConfig({
         "lib/providers.ts",
         "lib/rag.ts",
         "lib/roundtable/index.ts",
+        "lib/skills.ts",
         "lib/stream.ts",
         "lib/tokenBudget.ts",
         "lib/tools.ts",

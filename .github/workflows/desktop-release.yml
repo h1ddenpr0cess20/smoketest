@@ -1,0 +1,47 @@
+name: Desktop release builds
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            script: electron:dist:linux
+            files: release/*.AppImage
+          - os: windows-latest
+            script: electron:dist:win
+            files: release/*.exe
+          - os: macos-latest
+            script: electron:dist:mac
+            files: |
+              release/*.dmg
+              release/*.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build desktop app
+        run: npm run ${{ matrix.script }}
+
+      - name: Attach build to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.files }}
