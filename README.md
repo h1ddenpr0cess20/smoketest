@@ -100,6 +100,12 @@ Threads, attached file contents, API keys, and settings are stored in the browse
 
 This design makes local providers reachable from the Next.js server running on the same computer. If you deploy smoketest elsewhere, `127.0.0.1` refers to that deployment host—not the visitor's computer—so LM Studio and Ollama should be used with the app running locally.
 
+## Safety and intended use
+
+smoketest is a coding tool. It is **not intended for children** and must not be used as a companion, friend, therapist, or romantic partner. AI output—including generated code—can be inaccurate, insecure, or inappropriate; never rely on smoketest for crisis response, professional advice, or safety-critical decisions. MCP tool calls run without a manual approval step in this UI, so only connect a server you trust.
+
+Read the [AI Output Disclaimer and Conditions of Use](docs/ai-output-disclaimer.md), [Not a Companion](docs/not-a-companion.md), and [Security](docs/security.md) docs before using or deploying the app. The [documentation index](docs/README.md) summarizes these boundaries.
+
 ## Quality checks
 
 ```bash
