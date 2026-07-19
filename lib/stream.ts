@@ -19,6 +19,8 @@ export type ResponseStreamEvent = {
     query?: unknown;
     queries?: unknown;
     action?: { query?: unknown; queries?: unknown; url?: unknown };
+    call_id?: string;
+    arguments?: string;
   };
 };
 
@@ -161,9 +163,42 @@ export function toolActivity(event: ResponseStreamEvent): ToolActivity | null {
       return { id, label: query ? `File search: ${query}` : "File search" };
     case "mcp_call":
       return { id, label: `MCP · ${item.name || item.server_label || "tool"}` };
+    case "function_call":
+      return { id, label: functionCallLabel(item.name) };
     default:
       return null;
   }
+}
+
+function functionCallLabel(name: string | undefined): string {
+  if (name === "remember") return "Remember";
+  if (name === "forget") return "Forget";
+  return `Function: ${name || "call"}`;
+}
+
+export type FunctionCallRequest = {
+  id: string;
+  callId: string;
+  name: string;
+  arguments: string;
+};
+
+// A completed client-side function call ready for local execution; arguments
+// are already final by the time output_item.done fires, so no need to
+// accumulate function_call_arguments.delta events separately.
+export function functionCallFromEvent(
+  event: ResponseStreamEvent,
+): FunctionCallRequest | null {
+  if (event.type !== "response.output_item.done") return null;
+  const item = event.item;
+  if (!item || item.type !== "function_call") return null;
+  if (!item.call_id || !item.name) return null;
+  return {
+    id: item.id || item.call_id,
+    callId: item.call_id,
+    name: item.name,
+    arguments: item.arguments || "{}",
+  };
 }
 
 /** A file produced provider-side (code interpreter), downloadable by id. */

@@ -2193,6 +2193,72 @@ select:focus-visible {
 .tools-field input:focus {
   border-color: var(--accent);
 }
+.tools-field input[type="number"] {
+  -moz-appearance: textfield;
+}
+.tools-field input[type="number"]::-webkit-outer-spin-button,
+.tools-field input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.memory-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+.memory-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 8px 6px 8px 11px;
+}
+.memory-row span {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-soft);
+  font: 11px/1.5 var(--font-mono);
+  overflow-wrap: break-word;
+}
+.memory-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  margin-top: 12px;
+}
+.memory-add input {
+  height: 35px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  outline: 0;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0 10px;
+  font: 11px var(--font-mono);
+}
+.memory-add input:focus {
+  border-color: var(--accent);
+}
+.memory-add button {
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--ink-soft);
+  padding: 0 14px;
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.memory-add button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.memory-add button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
 .mcp-block {
   display: grid;
   gap: 7px;

@@ -51,7 +51,61 @@ export type ToolRequest = {
   fileSearch?: boolean;
   vectorStoreIds?: string[];
   mcpServers?: { label: string; url: string }[];
+  memory?: boolean;
 };
+
+// Client-side function tools, executed locally by app/page.tsx's
+// streamAssistant rather than provider-managed like TOOL_SUPPORT above.
+export const MEMORY_TOOL_NAMES = ["remember", "forget"] as const;
+export type MemoryToolName = (typeof MEMORY_TOOL_NAMES)[number];
+
+export function isMemoryToolName(value: unknown): value is MemoryToolName {
+  return (
+    typeof value === "string" &&
+    (MEMORY_TOOL_NAMES as readonly string[]).includes(value)
+  );
+}
+
+const MEMORY_TOOL_DEFINITIONS: Record<string, unknown>[] = [
+  {
+    type: "function",
+    name: "remember",
+    description:
+      "Store a brief memory to personalize future responses. Use when the user specifically asks to remember a detail, or clearly implies they want it remembered. Do not overuse.",
+    parameters: {
+      type: "object",
+      properties: {
+        memory: {
+          type: "string",
+          description:
+            "A concise summary of the memory (a few words to one or two sentences at most).",
+        },
+      },
+      required: ["memory"],
+      additionalProperties: false,
+    },
+    strict: false,
+  },
+  {
+    type: "function",
+    name: "forget",
+    description:
+      "Forget a stored memory that matches a given keyword (case-insensitive substring). Use when the user asks to forget something.",
+    parameters: {
+      type: "object",
+      properties: {
+        keyword: {
+          type: "string",
+          description:
+            "Keyword to match against saved memories (case-insensitive substring).",
+        },
+      },
+      required: ["keyword"],
+      additionalProperties: false,
+    },
+    strict: false,
+  },
+];
 
 export const MCP_LABEL_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 
@@ -126,5 +180,6 @@ export function buildTools(
       });
     }
   }
+  if (request.memory) tools.push(...MEMORY_TOOL_DEFINITIONS);
   return tools;
 }

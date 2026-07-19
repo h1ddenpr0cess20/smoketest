@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildTools, isMcpUrlAllowedForProvider } from "../lib/tools";
+import {
+  buildTools,
+  isMcpUrlAllowedForProvider,
+  isMemoryToolName,
+} from "../lib/tools";
 import { toolActivity } from "../lib/stream";
 
 describe("provider tool building", () => {
@@ -111,6 +115,23 @@ describe("provider tool building", () => {
       }),
     ).toEqual([]);
   });
+
+  it("appends the memory tools for every provider when requested", () => {
+    for (const provider of ["openai", "xai", "lmstudio", "ollama"] as const) {
+      const tools = buildTools(provider, { memory: true });
+      expect(tools.map((tool) => tool.name)).toEqual(["remember", "forget"]);
+      expect(tools.every((tool) => tool.type === "function")).toBe(true);
+    }
+    expect(buildTools("openai", { memory: false })).toEqual([]);
+    expect(buildTools("openai", {})).toEqual([]);
+  });
+
+  it("recognizes only the memory tool names", () => {
+    expect(isMemoryToolName("remember")).toBe(true);
+    expect(isMemoryToolName("forget")).toBe(true);
+    expect(isMemoryToolName("other")).toBe(false);
+    expect(isMemoryToolName(42)).toBe(false);
+  });
 });
 
 describe("tool activity extraction", () => {
@@ -151,5 +172,26 @@ describe("tool activity extraction", () => {
     expect(
       toolActivity({ type: "response.output_text.delta", delta: "x" }),
     ).toBeNull();
+  });
+
+  it("labels memory tool calls", () => {
+    expect(
+      toolActivity({
+        type: "response.output_item.added",
+        item: { id: "fc_1", type: "function_call", name: "remember" },
+      }),
+    ).toEqual({ id: "fc_1", label: "Remember" });
+    expect(
+      toolActivity({
+        type: "response.output_item.added",
+        item: { id: "fc_2", type: "function_call", name: "forget" },
+      }),
+    ).toEqual({ id: "fc_2", label: "Forget" });
+    expect(
+      toolActivity({
+        type: "response.output_item.added",
+        item: { id: "fc_3", type: "function_call", name: "other_tool" },
+      }),
+    ).toEqual({ id: "fc_3", label: "Function: other_tool" });
   });
 });

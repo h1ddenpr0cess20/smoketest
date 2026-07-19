@@ -7,6 +7,7 @@ import {
 } from "@/lib/providers";
 import {
   buildTools,
+  isMemoryToolName,
   isValidMcpUrl,
   MCP_LABEL_PATTERN,
   type ToolRequest,
@@ -40,6 +41,7 @@ function sanitizeToolRequest(value: unknown): ToolRequest {
     fileSearch?: unknown;
     vectorStoreIds?: unknown;
     mcpServers?: unknown;
+    memory?: unknown;
   };
   const vectorStoreIds = Array.isArray(raw.vectorStoreIds)
     ? raw.vectorStoreIds
@@ -69,28 +71,89 @@ function sanitizeToolRequest(value: unknown): ToolRequest {
     fileSearch: raw.fileSearch === true,
     vectorStoreIds,
     mcpServers,
+    memory: raw.memory === true,
   };
 }
 
 type InputMessage = { role: "user" | "assistant"; content: string };
+// The two extra item shapes a memory tool round-trip appends to `input`.
+type FunctionCallInput = {
+  type: "function_call";
+  call_id: string;
+  name: string;
+  arguments: string;
+};
+type FunctionCallOutputInput = {
+  type: "function_call_output";
+  call_id: string;
+  output: string;
+};
+type InputItem = InputMessage | FunctionCallInput | FunctionCallOutputInput;
 
-// `input` is either a plain string or a role-tagged message array. Anything
-// else (or an empty value) is rejected before it reaches the provider.
-function sanitizeInput(value: unknown): string | InputMessage[] | null {
+const MAX_FUNCTION_CALL_FIELD_LENGTH = 8_000;
+
+function sanitizeFunctionCallItem(
+  item: Record<string, unknown>,
+): InputItem | null {
+  const callId = item.call_id;
+  if (
+    item.type === "function_call" &&
+    typeof callId === "string" &&
+    callId &&
+    isMemoryToolName(item.name) &&
+    typeof item.arguments === "string" &&
+    item.arguments.length <= MAX_FUNCTION_CALL_FIELD_LENGTH
+  ) {
+    return {
+      type: "function_call",
+      call_id: callId,
+      name: item.name,
+      arguments: item.arguments,
+    };
+  }
+  if (
+    item.type === "function_call_output" &&
+    typeof callId === "string" &&
+    callId &&
+    typeof item.output === "string" &&
+    item.output.length <= MAX_FUNCTION_CALL_FIELD_LENGTH
+  ) {
+    return {
+      type: "function_call_output",
+      call_id: callId,
+      output: item.output,
+    };
+  }
+  return null;
+}
+
+// `input` is a plain string, or a role-tagged message array that may also
+// carry function_call/function_call_output items from a memory tool round trip.
+function sanitizeInput(value: unknown): string | InputItem[] | null {
   if (typeof value === "string") return value.trim() || null;
   if (!Array.isArray(value) || !value.length) return null;
-  const messages: InputMessage[] = [];
-  for (const item of value) {
-    if (!item || typeof item !== "object") return null;
-    const { role, content } = item as { role?: unknown; content?: unknown };
+  const items: InputItem[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") return null;
+    const record = entry as Record<string, unknown>;
+    if (
+      record.type === "function_call" ||
+      record.type === "function_call_output"
+    ) {
+      const sanitized = sanitizeFunctionCallItem(record);
+      if (!sanitized) return null;
+      items.push(sanitized);
+      continue;
+    }
+    const { role, content } = record as { role?: unknown; content?: unknown };
     if (
       (role !== "user" && role !== "assistant") ||
       typeof content !== "string"
     )
       return null;
-    messages.push({ role, content });
+    items.push({ role, content });
   }
-  return messages;
+  return items;
 }
 
 export async function POST(request: NextRequest) {

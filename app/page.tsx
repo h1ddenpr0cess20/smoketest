@@ -21,6 +21,7 @@ import {
   eventText,
   eventTextItemId,
   finalResponseText,
+  functionCallFromEvent,
   generatedFilesFromEvent,
   generatedFilesFromResponse,
   incompleteReason,
@@ -28,6 +29,7 @@ import {
   outputTextFromJson,
   parseSseBlock,
   toolActivity,
+  type FunctionCallRequest,
   type GeneratedFile,
 } from "@/lib/stream";
 import { PROVIDERS, PROVIDER_IDS, type ProviderId } from "@/lib/providers";
@@ -74,9 +76,22 @@ import {
   MCP_LABEL_PATTERN,
   TOOL_SUPPORT,
   isMcpUrlAllowedForProvider,
+  isMemoryToolName,
   isValidMcpUrl,
   type ToolRequest,
 } from "@/lib/tools";
+import {
+  DEFAULT_MEMORY_LIMIT,
+  MEMORY_TEXT_MAX_LENGTH,
+  clampMemoryLimit,
+  memoriesForPrompt,
+  restoreMemoryConfig,
+  restoreMemoryList,
+  runMemoryToolCall,
+  withMemoryAdded,
+  withMemoryLimitApplied,
+  withMemoryRemovedAt,
+} from "@/lib/memory";
 import {
   buildReferenceBlock,
   buildRetrievalQuery,
@@ -136,6 +151,8 @@ const STORAGE = {
   mcp: "smoketest.mcp.v1",
   reasoning: "smoketest.reasoning.v1",
   autoCompact: "smoketest.auto-compact.v1",
+  memoryConfig: "smoketest.memory-config.v1",
+  memories: "smoketest.memories.v1",
 } as const;
 
 const ROUNDTABLE_COLORS = [
@@ -626,11 +643,16 @@ function readAllFilesFromEntry(
   });
 }
 
+type ResponsesInputItem =
+  | { role: "user" | "assistant"; content: string }
+  | { type: "function_call"; call_id: string; name: string; arguments: string }
+  | { type: "function_call_output"; call_id: string; output: string };
+
 type StreamPayload = {
   provider: ProviderId;
   apiKey: string;
   model: string;
-  input: Array<{ role: "user" | "assistant"; content: string }>;
+  input: ResponsesInputItem[];
   instructions: string;
   reasoningEffort: string;
   priorityProcessing: boolean;
@@ -642,6 +664,19 @@ type StreamOutcome = {
   toolActivity: string[];
   generatedFiles: GeneratedFile[];
 };
+type TurnOutcome = StreamOutcome & { functionCalls: FunctionCallRequest[] };
+
+// getMemories/onMemoriesChange read and write a ref, not React state
+// directly, so a multi-turn tool loop never sees a stale list mid-send.
+type MemoryToolContext = {
+  enabled: boolean;
+  limit: number;
+  getMemories: () => string[];
+  onMemoriesChange: (next: string[]) => void;
+};
+
+// Caps function-call round trips per assistant turn.
+const MAX_MEMORY_TOOL_TURNS = 4;
 
 type RoundtableRuntime = {
   threadId: string;
@@ -661,11 +696,11 @@ type RoundtableRuntime = {
 // caller checks its own signal) and failures come back in `error` alongside
 // any partial text. UI updates are throttled to ~12/s — rendering every SSE
 // delta re-parses the conversation's markdown and locked up the browser.
-async function streamAssistant(
+async function runResponsesTurn(
   payload: StreamPayload,
   signal: AbortSignal,
   onUpdate: (text: string, toolActivity: string[]) => void,
-): Promise<StreamOutcome> {
+): Promise<TurnOutcome> {
   let streamed = "";
   let lastFlush = 0;
   // Tracks which output item the streamed text last belonged to, so a new
@@ -678,6 +713,9 @@ async function streamAssistant(
   const activityList = () => [...activities.values()];
   const files = new Map<string, GeneratedFile>();
   const fileList = () => [...files.values()];
+  // Keyed by item id so a repeated done event can't duplicate one.
+  const calls = new Map<string, FunctionCallRequest>();
+  const callList = () => [...calls.values()];
   const mergeFiles = (items: GeneratedFile[]) => {
     for (const file of items) {
       const existing = files.get(file.fileId);
@@ -712,6 +750,7 @@ async function streamAssistant(
           `${PROVIDERS[payload.provider].name} returned ${response.status}.`,
         toolActivity: [],
         generatedFiles: [],
+        functionCalls: [],
       };
     }
     if (
@@ -722,6 +761,7 @@ async function streamAssistant(
         text: outputTextFromJson(body),
         toolActivity: [],
         generatedFiles: generatedFilesFromResponse(body),
+        functionCalls: [],
       };
     }
     if (!response.body) {
@@ -730,6 +770,7 @@ async function streamAssistant(
         error: "The provider returned an empty stream.",
         toolActivity: [],
         generatedFiles: [],
+        functionCalls: [],
       };
     }
 
@@ -755,6 +796,8 @@ async function streamAssistant(
         activities.set(activity.id, activity.label);
         push(true);
       }
+      const call = functionCallFromEvent(event);
+      if (call) calls.set(call.id, call);
       const delta = eventText(event);
       if (delta) {
         const itemId = eventTextItemId(event);
@@ -783,6 +826,7 @@ async function streamAssistant(
       text: streamed,
       toolActivity: activityList(),
       generatedFiles: fileList(),
+      functionCalls: callList(),
     };
   } catch (error) {
     if (signal.aborted) {
@@ -790,6 +834,7 @@ async function streamAssistant(
         text: streamed,
         toolActivity: activityList(),
         generatedFiles: fileList(),
+        functionCalls: callList(),
       };
     }
     return {
@@ -797,8 +842,106 @@ async function streamAssistant(
       error: error instanceof Error ? error.message : "Something went wrong.",
       toolActivity: activityList(),
       generatedFiles: fileList(),
+      functionCalls: callList(),
     };
   }
+}
+
+// Wraps runResponsesTurn with the remember/forget tool loop: a memory tool
+// call is executed locally and the call/result pair fed back for a
+// follow-up request, up to MAX_MEMORY_TOOL_TURNS times.
+async function streamAssistant(
+  payload: StreamPayload,
+  signal: AbortSignal,
+  onUpdate: (text: string, toolActivity: string[]) => void,
+  memoryCtx?: MemoryToolContext,
+): Promise<StreamOutcome> {
+  let workingInput = payload.input;
+  let priorText = "";
+  const activityLog: string[] = [];
+  const fileList: GeneratedFile[] = [];
+
+  for (let turn = 0; turn < MAX_MEMORY_TOOL_TURNS; turn++) {
+    const result = await runResponsesTurn(
+      { ...payload, input: workingInput },
+      signal,
+      (text, activity) => {
+        onUpdate(
+          priorText && text ? `${priorText}\n\n${text}` : priorText || text,
+          [...activityLog, ...activity],
+        );
+      },
+    );
+    priorText =
+      priorText && result.text
+        ? `${priorText}\n\n${result.text}`
+        : priorText || result.text;
+    activityLog.push(...result.toolActivity);
+    for (const file of result.generatedFiles) {
+      if (!fileList.some((existing) => existing.fileId === file.fileId))
+        fileList.push(file);
+    }
+
+    if (result.error) {
+      return {
+        text: priorText,
+        error: result.error,
+        toolActivity: activityLog,
+        generatedFiles: fileList,
+      };
+    }
+    if (signal.aborted) {
+      return {
+        text: priorText,
+        toolActivity: activityLog,
+        generatedFiles: fileList,
+      };
+    }
+
+    const pendingCalls = result.functionCalls.filter((call) =>
+      isMemoryToolName(call.name),
+    );
+    if (
+      !memoryCtx?.enabled ||
+      !pendingCalls.length ||
+      turn === MAX_MEMORY_TOOL_TURNS - 1
+    ) {
+      return {
+        text: priorText,
+        toolActivity: activityLog,
+        generatedFiles: fileList,
+      };
+    }
+
+    let currentMemories = memoryCtx.getMemories();
+    const appended: ResponsesInputItem[] = [];
+    for (const call of pendingCalls) {
+      const { output, memories: nextMemories } = runMemoryToolCall(
+        call.name,
+        call.arguments,
+        currentMemories,
+        memoryCtx.limit,
+      );
+      currentMemories = nextMemories;
+      appended.push(
+        {
+          type: "function_call",
+          call_id: call.callId,
+          name: call.name,
+          arguments: call.arguments,
+        },
+        { type: "function_call_output", call_id: call.callId, output },
+      );
+    }
+    memoryCtx.onMemoriesChange(currentMemories);
+    workingInput = [...workingInput, ...appended];
+  }
+
+  return {
+    text: priorText,
+    toolActivity: activityLog,
+    generatedFiles: fileList,
+  };
 }
 
 function Icon({
@@ -1371,6 +1514,10 @@ export default function Home() {
   const [modelsRefresh, setModelsRefresh] = useState(0);
   const [mcpServers, setMcpServers] = useState<McpServerEntry[]>([]);
   const [mcpDraft, setMcpDraft] = useState({ label: "", url: "" });
+  const [memoryEnabled, setMemoryEnabled] = useState(false);
+  const [memoryLimit, setMemoryLimit] = useState(DEFAULT_MEMORY_LIMIT);
+  const [memories, setMemories] = useState<string[]>([]);
+  const [memoryDraft, setMemoryDraft] = useState("");
   // Attachment status lines are keyed by thread so switching sessions shows
   // only the active thread's status without an effect-driven reset.
   const [attachNote, setAttachNote] = useState<{
@@ -1389,6 +1536,7 @@ export default function Home() {
   const roundtableRuntimeRef = useRef<RoundtableRuntime | null>(null);
   const roundtableDrivingRef = useRef<RoundtableRuntime | null>(null);
   const threadsRef = useRef<Thread[]>([]);
+  const memoriesRef = useRef<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const dirRef = useRef<HTMLInputElement>(null);
   const attachMenuRef = useRef<HTMLDivElement>(null);
@@ -1425,6 +1573,7 @@ export default function Home() {
     let restoredTheme: "smoke" | "ember" | null = null;
     let restoredReasoning: string | null = null;
     let restoredAutoCompact: boolean | null = null;
+    let restoredMemoryConfig: { enabled: boolean; limit: number } | null = null;
     try {
       const saved = JSON.parse(
         localStorage.getItem(STORAGE.settings) || "null",
@@ -1448,6 +1597,9 @@ export default function Home() {
       const savedAutoCompact = localStorage.getItem(STORAGE.autoCompact);
       if (savedAutoCompact === "1" || savedAutoCompact === "0")
         restoredAutoCompact = savedAutoCompact === "1";
+      restoredMemoryConfig = restoreMemoryConfig(
+        JSON.parse(localStorage.getItem(STORAGE.memoryConfig) || "null"),
+      );
     } catch {
       // Invalid local state falls back to defaults.
     }
@@ -1455,6 +1607,15 @@ export default function Home() {
       try {
         return restoreMcpServers(
           JSON.parse(localStorage.getItem(STORAGE.mcp) || "null"),
+        );
+      } catch {
+        return [];
+      }
+    })();
+    const restoredMemories = (() => {
+      try {
+        return restoreMemoryList(
+          JSON.parse(localStorage.getItem(STORAGE.memories) || "null"),
         );
       } catch {
         return [];
@@ -1469,6 +1630,12 @@ export default function Home() {
       if (restoredReasoning) setReasoning(restoredReasoning);
       if (restoredAutoCompact !== null) setAutoCompact(restoredAutoCompact);
       setMcpServers(restoredMcp);
+      if (restoredMemoryConfig) {
+        setMemoryEnabled(restoredMemoryConfig.enabled);
+        setMemoryLimit(restoredMemoryConfig.limit);
+      }
+      memoriesRef.current = restoredMemories;
+      setMemories(restoredMemories);
       setThreads(restoredThreads);
       setActiveId(restoredThreads[0].id);
       setRoundtableStatus(
@@ -1504,6 +1671,11 @@ export default function Home() {
       localStorage.setItem(STORAGE.mcp, JSON.stringify(mcpServers));
       localStorage.setItem(STORAGE.reasoning, reasoning);
       localStorage.setItem(STORAGE.autoCompact, autoCompact ? "1" : "0");
+      localStorage.setItem(
+        STORAGE.memoryConfig,
+        JSON.stringify({ enabled: memoryEnabled, limit: memoryLimit }),
+      );
+      localStorage.setItem(STORAGE.memories, JSON.stringify(memories));
     } catch {
       // Storage unavailable — settings stay in memory for this session.
     }
@@ -1516,6 +1688,9 @@ export default function Home() {
     mcpServers,
     reasoning,
     autoCompact,
+    memoryEnabled,
+    memoryLimit,
+    memories,
     hydrated,
   ]);
 
@@ -1712,6 +1887,7 @@ export default function Home() {
       mcpServers: mcpServers
         .filter((server) => server.enabled)
         .map(({ label, url }) => ({ label, url })),
+      memory: memoryEnabled,
     };
   }
 
@@ -1724,6 +1900,37 @@ export default function Home() {
       { id: id(), label, url, enabled: true },
     ]);
     setMcpDraft({ label: "", url: "" });
+  }
+
+  // Keeps memoriesRef in sync so the tool loop's getMemories() never reads a
+  // stale list while a setMemories() update is still pending.
+  function updateMemories(updater: (current: string[]) => string[]) {
+    setMemories((current) => {
+      const next = updater(current);
+      memoriesRef.current = next;
+      return next;
+    });
+  }
+
+  function memoryToolContext() {
+    return {
+      enabled: memoryEnabled,
+      limit: memoryLimit,
+      getMemories: () => memoriesRef.current,
+      onMemoriesChange: (next: string[]) => {
+        memoriesRef.current = next;
+        setMemories(next);
+      },
+    };
+  }
+
+  function instructionsWithMemory(
+    activeModeValue: Mode,
+    summary: string | undefined,
+  ) {
+    const base = buildInstructions(activeModeValue, summary);
+    if (!memoryEnabled || !memories.length) return base;
+    return `${base}${memoriesForPrompt(memories)}`;
   }
 
   // Discover models at runtime — on load, on provider switch, and when the API
@@ -2936,7 +3143,7 @@ export default function Home() {
           apiKey: currentSettings.apiKey,
           model: currentSettings.model,
           input: requestInput,
-          instructions: buildInstructions(activeMode, compactedSummary),
+          instructions: instructionsWithMemory(activeMode, compactedSummary),
           reasoningEffort: reasoning,
           priorityProcessing: currentSettings.priorityProcessing,
           tools: currentToolRequest(),
@@ -2947,6 +3154,7 @@ export default function Home() {
             content: text,
             toolActivity: [...ragLabels, ...usedTools],
           }),
+        memoryToolContext(),
       );
       const finalActivity = [...ragLabels, ...outcome.toolActivity];
       if (controller.signal.aborted) {
@@ -3098,7 +3306,10 @@ export default function Home() {
           apiKey: currentSettings.apiKey,
           model: currentSettings.model,
           input,
-          instructions: buildInstructions(requestMode, summaryForRegenerate),
+          instructions: instructionsWithMemory(
+            requestMode,
+            summaryForRegenerate,
+          ),
           reasoningEffort: reasoning,
           priorityProcessing: currentSettings.priorityProcessing,
           tools: currentToolRequest(),
@@ -3109,6 +3320,7 @@ export default function Home() {
             content: text,
             toolActivity: usedTools,
           }),
+        memoryToolContext(),
       );
       if (controller.signal.aborted || outcome.error) {
         patchMessage(threadId, messageId, {
@@ -4514,6 +4726,103 @@ export default function Home() {
                     retrieval runs in this browser instead. Blank embedding
                     model auto-picks from the server&apos;s model list.
                   </p>
+                </>
+              )}
+            </div>
+            <div className="tools-section">
+              <span className="overline">MEMORY</span>
+              <div className="tools-grid">
+                <label className="tool-toggle priority-toggle">
+                  <input
+                    type="checkbox"
+                    checked={memoryEnabled}
+                    onChange={(event) => setMemoryEnabled(event.target.checked)}
+                  />
+                  <span>
+                    <strong>Enable memory</strong>
+                    <small>
+                      Let the assistant remember short details on request and
+                      fold them into future system prompts. Stored only in this
+                      browser.
+                    </small>
+                  </span>
+                </label>
+              </div>
+              {memoryEnabled && (
+                <>
+                  <label className="tools-field">
+                    Memory limit
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={memoryLimit}
+                      onChange={(event) => {
+                        const next = clampMemoryLimit(
+                          Number(event.target.value),
+                        );
+                        setMemoryLimit(next);
+                        updateMemories((current) =>
+                          withMemoryLimitApplied(current, next),
+                        );
+                      }}
+                    />
+                  </label>
+                  <div className="memory-add">
+                    <input
+                      value={memoryDraft}
+                      maxLength={MEMORY_TEXT_MAX_LENGTH}
+                      onChange={(event) => setMemoryDraft(event.target.value)}
+                      placeholder="Add a memory manually…"
+                      aria-label="New memory text"
+                    />
+                    <button
+                      onClick={() => {
+                        updateMemories((current) =>
+                          withMemoryAdded(current, memoryDraft, memoryLimit),
+                        );
+                        setMemoryDraft("");
+                      }}
+                      disabled={!memoryDraft.trim()}
+                    >
+                      Add
+                    </button>
+                  </div>
+                  {memories.length ? (
+                    <>
+                      <div className="memory-list">
+                        {memories.map((memory, index) => (
+                          <div
+                            className="memory-row"
+                            key={`${index}-${memory}`}
+                          >
+                            <span>{memory}</span>
+                            <button
+                              className="icon-button"
+                              onClick={() =>
+                                updateMemories((current) =>
+                                  withMemoryRemovedAt(current, index),
+                                )
+                              }
+                              aria-label={`Delete memory ${index + 1}`}
+                            >
+                              <Icon name="trash" size={13} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="connection-row">
+                        <button
+                          className="test-button"
+                          onClick={() => updateMemories(() => [])}
+                        >
+                          Clear all memories
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="tools-empty">No memories saved yet.</p>
+                  )}
                 </>
               )}
             </div>
