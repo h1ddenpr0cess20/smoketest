@@ -82,6 +82,12 @@ import {
   type ToolRequest,
 } from "@/lib/tools";
 import {
+  probeMcpServer,
+  reachableMcpServers,
+  withMcpReachability,
+  type McpReachability,
+} from "@/lib/mcpReachability";
+import {
   DEFAULT_MEMORY_LIMIT,
   MEMORY_TEXT_MAX_LENGTH,
   clampMemoryLimit,
@@ -1529,6 +1535,15 @@ const MessageView = memo(function MessageView({
   );
 });
 
+type SettingsTab = "model" | "tools" | "memory" | "skills";
+
+const SETTINGS_TABS: readonly [SettingsTab, string][] = [
+  ["model", "Model"],
+  ["tools", "Tools"],
+  ["memory", "Memory"],
+  ["skills", "Skills"],
+];
+
 export default function Home() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [activeId, setActiveId] = useState("");
@@ -1550,12 +1565,14 @@ export default function Home() {
   const [hydrated, setHydrated] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("model");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [modelStatus, setModelStatus] = useState("");
   const [modelsRefresh, setModelsRefresh] = useState(0);
   const [mcpServers, setMcpServers] = useState<McpServerEntry[]>([]);
   const [mcpDraft, setMcpDraft] = useState({ label: "", url: "" });
+  const [mcpReachability, setMcpReachability] = useState<McpReachability>({});
   const [memoryEnabled, setMemoryEnabled] = useState(false);
   const [memoryLimit, setMemoryLimit] = useState(DEFAULT_MEMORY_LIMIT);
   const [memories, setMemories] = useState<string[]>([]);
@@ -2013,9 +2030,10 @@ export default function Home() {
         .split(",")
         .map((idValue) => idValue.trim())
         .filter(Boolean),
-      mcpServers: mcpServers
-        .filter((server) => server.enabled)
-        .map(({ label, url }) => ({ label, url })),
+      mcpServers: reachableMcpServers(
+        mcpServers.filter((server) => server.enabled),
+        mcpReachability,
+      ).map(({ label, url }) => ({ label, url })),
       memory: memoryEnabled,
       skills: activeSkills.length > 0,
       skillResources: activeSkills.some((skill) => skill.resources.length > 0),
@@ -2032,6 +2050,36 @@ export default function Home() {
     ]);
     setMcpDraft({ label: "", url: "" });
   }
+
+  // Re-probes every enabled MCP server whenever the list changes, and on a
+  // slow interval otherwise, so a server that goes down mid-session drops
+  // out of currentToolRequest() instead of staying advertised as available.
+  useEffect(() => {
+    let cancelled = false;
+    async function checkAll() {
+      const enabled = mcpServers.filter((server) => server.enabled);
+      const results = await Promise.all(
+        enabled.map(async (server) => ({
+          id: server.id,
+          reachable: await probeMcpServer(server.url),
+        })),
+      );
+      if (cancelled) return;
+      setMcpReachability((current) =>
+        results.reduce(
+          (next, result) =>
+            withMcpReachability(next, result.id, result.reachable),
+          current,
+        ),
+      );
+    }
+    void checkAll();
+    const interval = setInterval(() => void checkAll(), 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [mcpServers]);
 
   // Keeps memoriesRef in sync so the tool loop's getMemories() never reads a
   // stale list while a setMemories() update is still pending.
@@ -4514,8 +4562,8 @@ export default function Home() {
           >
             <div className="settings-head">
               <div>
-                <span className="overline">CONNECTION</span>
-                <h2 id="settings-title">Provider settings</h2>
+                <span className="overline">SETTINGS</span>
+                <h2 id="settings-title">Settings</h2>
               </div>
               <button
                 className="icon-button"
@@ -4525,600 +4573,676 @@ export default function Home() {
                 <Icon name="close" />
               </button>
             </div>
-            <div className="settings-providers">
-              {PROVIDER_IDS.map((item) => (
-                <button
-                  key={item}
-                  className={provider === item ? "active" : ""}
-                  onClick={() => {
-                    setProvider(item);
-                    setModels([]);
-                    setModelStatus("");
-                  }}
-                  style={
-                    {
-                      "--provider": PROVIDERS[item].accent,
-                    } as React.CSSProperties
-                  }
-                >
-                  <span>{PROVIDERS[item].shortName}</span>
-                  <div>
-                    <strong>{PROVIDERS[item].name}</strong>
-                    <small>{PROVIDERS[item].hint}</small>
-                  </div>
-                </button>
-              ))}
-            </div>
-            <div className="settings-form">
-              <label>
-                Responses API base URL
-                <input value={currentProvider.baseUrl} readOnly />
-                <small>Fixed preset for safer request routing.</small>
-              </label>
-              <label>
-                API key{" "}
-                {currentProvider.apiKeyRequired ? (
-                  <b>required</b>
-                ) : (
-                  <em>optional</em>
-                )}
-                <input
-                  className="api-key-input"
-                  type="text"
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
-                  value={currentSettings.apiKey}
-                  onChange={(event) =>
-                    updateProviderSettings({ apiKey: event.target.value })
-                  }
-                  placeholder={
-                    currentProvider.apiKeyRequired
-                      ? "Paste a provider key"
-                      : "Leave blank for local server"
-                  }
-                />
-                <small>Stored only in this browser&apos;s local storage.</small>
-              </label>
-              <label>
-                Model
-                {models.length ? (
-                  <select
-                    value={currentSettings.model}
-                    onChange={(event) =>
-                      updateProviderSettings({ model: event.target.value })
-                    }
+            <div className="settings-shell">
+              <nav className="settings-tabs" aria-label="Settings sections">
+                {SETTINGS_TABS.map(([tab, label]) => (
+                  <button
+                    key={tab}
+                    className={settingsTab === tab ? "is-active" : ""}
+                    onClick={() => setSettingsTab(tab)}
+                    aria-current={settingsTab === tab ? "page" : undefined}
                   >
-                    {!currentSettings.model && (
-                      <option value="" disabled>
-                        Choose a model…
-                      </option>
-                    )}
-                    {currentSettings.model &&
-                      !models.includes(currentSettings.model) && (
-                        <option value={currentSettings.model}>
-                          {currentSettings.model} (not on server)
-                        </option>
-                      )}
-                    {models.map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    value={currentSettings.model}
-                    onChange={(event) =>
-                      updateProviderSettings({ model: event.target.value })
-                    }
-                    placeholder="Model identifier"
-                  />
-                )}
-                <small>
-                  {models.length
-                    ? "Loaded from the provider's /v1/models."
-                    : "Type a model id, or connect to load the list."}
-                </small>
-              </label>
-              <label>
-                Reasoning effort
-                <select
-                  value={reasoning}
-                  onChange={(event) => setReasoning(event.target.value)}
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
-                <small>
-                  Sent as the standard Responses API reasoning parameter.
-                </small>
-              </label>
-            </div>
-            <div className="tools-section">
-              <span className="overline">HISTORY</span>
-              <div className="tools-grid">
-                <label className="tool-toggle priority-toggle">
-                  <input
-                    type="checkbox"
-                    checked={autoCompact}
-                    onChange={(event) => setAutoCompact(event.target.checked)}
-                  />
-                  <span>
-                    <strong>Auto-compact history</strong>
-                    <small>
-                      When a thread nears its history budget, summarize older
-                      turns instead of silently dropping them. Compact manually
-                      anytime with the history meter&apos;s button or
-                      `/compact`.
-                    </small>
-                  </span>
-                </label>
-              </div>
-            </div>
-            {provider === "openai" && (
-              <div className="tools-section">
-                <span className="overline">OPENAI PROCESSING</span>
-                <div className="tools-grid">
-                  <label className="tool-toggle priority-toggle">
-                    <input
-                      type="checkbox"
-                      checked={currentSettings.priorityProcessing}
-                      onChange={(event) =>
-                        updateProviderSettings({
-                          priorityProcessing: event.target.checked,
-                        })
-                      }
-                    />
-                    <span>
-                      <strong>Fast mode</strong>
-                      <small>
-                        Use Priority processing for faster, more consistent
-                        responses. Enterprise access and premium pricing
-                        required.
-                      </small>
-                    </span>
-                  </label>
-                </div>
-              </div>
-            )}
-            <div className="tools-section">
-              <span className="overline">PROVIDER TOOLS</span>
-              {TOOL_SUPPORT[provider].webSearch ||
-              TOOL_SUPPORT[provider].mcp ? (
-                <>
-                  <div className="tools-grid">
-                    {TOOL_SUPPORT[provider].webSearch && (
-                      <label className="tool-toggle">
-                        <input
-                          type="checkbox"
-                          checked={currentSettings.webSearch}
-                          onChange={(event) =>
-                            updateProviderSettings({
-                              webSearch: event.target.checked,
-                            })
+                    {label}
+                  </button>
+                ))}
+              </nav>
+              <div className="settings-body">
+                {settingsTab === "model" && (
+                  <>
+                    <div className="settings-providers">
+                      {PROVIDER_IDS.map((item) => (
+                        <button
+                          key={item}
+                          className={provider === item ? "active" : ""}
+                          onClick={() => {
+                            setProvider(item);
+                            setModels([]);
+                            setModelStatus("");
+                          }}
+                          style={
+                            {
+                              "--provider": PROVIDERS[item].accent,
+                            } as React.CSSProperties
                           }
-                        />
-                        <span>
-                          <strong>Web search</strong>
-                          <small>
-                            Provider-managed searches for fresh information
-                          </small>
-                        </span>
-                      </label>
-                    )}
-                    {TOOL_SUPPORT[provider].xSearch && (
-                      <label className="tool-toggle">
-                        <input
-                          type="checkbox"
-                          checked={currentSettings.xSearch}
-                          onChange={(event) =>
-                            updateProviderSettings({
-                              xSearch: event.target.checked,
-                            })
-                          }
-                        />
-                        <span>
-                          <strong>X search</strong>
-                          <small>Search X posts through Grok</small>
-                        </span>
-                      </label>
-                    )}
-                    {TOOL_SUPPORT[provider].codeInterpreter && (
-                      <label className="tool-toggle">
-                        <input
-                          type="checkbox"
-                          checked={currentSettings.codeInterpreter}
-                          onChange={(event) =>
-                            updateProviderSettings({
-                              codeInterpreter: event.target.checked,
-                            })
-                          }
-                        />
-                        <span>
-                          <strong>Code interpreter</strong>
-                          <small>Run Python in the provider sandbox</small>
-                        </span>
-                      </label>
-                    )}
-                    {TOOL_SUPPORT[provider].fileSearch && (
-                      <label className="tool-toggle">
-                        <input
-                          type="checkbox"
-                          checked={currentSettings.fileSearch}
-                          onChange={(event) =>
-                            updateProviderSettings({
-                              fileSearch: event.target.checked,
-                            })
-                          }
-                        />
-                        <span>
-                          <strong>File search</strong>
-                          <small>Search vector stores by ID</small>
-                        </span>
-                      </label>
-                    )}
-                  </div>
-                  {TOOL_SUPPORT[provider].fileSearch &&
-                    currentSettings.fileSearch && (
-                      <label className="tools-field">
-                        Vector store IDs
-                        <input
-                          value={currentSettings.vectorStoreId}
-                          onChange={(event) =>
-                            updateProviderSettings({
-                              vectorStoreId: event.target.value,
-                            })
-                          }
-                          placeholder="vs_… (comma-separated)"
-                        />
-                      </label>
-                    )}
-                  <div className="mcp-block">
-                    <span className="overline">MCP SERVERS</span>
-                    {mcpServers.map((server) => {
-                      const reachable = isMcpUrlAllowedForProvider(
-                        server.url,
-                        provider,
-                      );
-                      return (
-                        <div
-                          className={`mcp-row${reachable ? "" : " unavailable"}`}
-                          key={server.id}
                         >
-                          <label
-                            title={
-                              reachable
-                                ? undefined
-                                : `${currentProvider.name} runs MCP calls from the cloud and can't reach a plain http:// server — use an https:// URL.`
+                          <span>{PROVIDERS[item].shortName}</span>
+                          <div>
+                            <strong>{PROVIDERS[item].name}</strong>
+                            <small>{PROVIDERS[item].hint}</small>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="settings-form">
+                      <label>
+                        Responses API base URL
+                        <input value={currentProvider.baseUrl} readOnly />
+                        <small>Fixed preset for safer request routing.</small>
+                      </label>
+                      <label>
+                        API key{" "}
+                        {currentProvider.apiKeyRequired ? (
+                          <b>required</b>
+                        ) : (
+                          <em>optional</em>
+                        )}
+                        <input
+                          className="api-key-input"
+                          type="text"
+                          autoComplete="off"
+                          autoCorrect="off"
+                          autoCapitalize="off"
+                          spellCheck={false}
+                          value={currentSettings.apiKey}
+                          onChange={(event) =>
+                            updateProviderSettings({
+                              apiKey: event.target.value,
+                            })
+                          }
+                          placeholder={
+                            currentProvider.apiKeyRequired
+                              ? "Paste a provider key"
+                              : "Leave blank for local server"
+                          }
+                        />
+                        <small>
+                          Stored only in this browser&apos;s local storage.
+                        </small>
+                      </label>
+                      <label>
+                        Model
+                        {models.length ? (
+                          <select
+                            value={currentSettings.model}
+                            onChange={(event) =>
+                              updateProviderSettings({
+                                model: event.target.value,
+                              })
                             }
                           >
+                            {!currentSettings.model && (
+                              <option value="" disabled>
+                                Choose a model…
+                              </option>
+                            )}
+                            {currentSettings.model &&
+                              !models.includes(currentSettings.model) && (
+                                <option value={currentSettings.model}>
+                                  {currentSettings.model} (not on server)
+                                </option>
+                              )}
+                            {models.map((model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            value={currentSettings.model}
+                            onChange={(event) =>
+                              updateProviderSettings({
+                                model: event.target.value,
+                              })
+                            }
+                            placeholder="Model identifier"
+                          />
+                        )}
+                        <small>
+                          {models.length
+                            ? "Loaded from the provider's /v1/models."
+                            : "Type a model id, or connect to load the list."}
+                        </small>
+                      </label>
+                      <label>
+                        Reasoning effort
+                        <select
+                          value={reasoning}
+                          onChange={(event) => setReasoning(event.target.value)}
+                        >
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                        </select>
+                        <small>
+                          Sent as the standard Responses API reasoning
+                          parameter.
+                        </small>
+                      </label>
+                    </div>
+                  </>
+                )}
+                {settingsTab === "tools" && (
+                  <>
+                    <div className="tools-section">
+                      <span className="overline">HISTORY</span>
+                      <div className="tools-grid">
+                        <label className="tool-toggle priority-toggle">
+                          <input
+                            type="checkbox"
+                            checked={autoCompact}
+                            onChange={(event) =>
+                              setAutoCompact(event.target.checked)
+                            }
+                          />
+                          <span>
+                            <strong>Auto-compact history</strong>
+                            <small>
+                              When a thread nears its history budget, summarize
+                              older turns instead of silently dropping them.
+                              Compact manually anytime with the history
+                              meter&apos;s button or `/compact`.
+                            </small>
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                    {provider === "openai" && (
+                      <div className="tools-section">
+                        <span className="overline">OPENAI PROCESSING</span>
+                        <div className="tools-grid">
+                          <label className="tool-toggle priority-toggle">
                             <input
                               type="checkbox"
-                              checked={server.enabled}
+                              checked={currentSettings.priorityProcessing}
                               onChange={(event) =>
-                                setMcpServers((current) =>
-                                  current.map((item) =>
-                                    item.id === server.id
-                                      ? {
-                                          ...item,
-                                          enabled: event.target.checked,
-                                        }
-                                      : item,
-                                  ),
-                                )
+                                updateProviderSettings({
+                                  priorityProcessing: event.target.checked,
+                                })
                               }
                             />
                             <span>
-                              <strong>{server.label}</strong>
-                              <small>{server.url}</small>
+                              <strong>Fast mode</strong>
+                              <small>
+                                Use Priority processing for faster, more
+                                consistent responses. Enterprise access and
+                                premium pricing required.
+                              </small>
                             </span>
                           </label>
-                          <button
-                            className="icon-button"
-                            onClick={() =>
-                              setMcpServers((current) =>
-                                current.filter((item) => item.id !== server.id),
-                              )
-                            }
-                            aria-label={`Remove ${server.label}`}
-                          >
-                            <Icon name="trash" size={13} />
-                          </button>
                         </div>
-                      );
-                    })}
-                    <div className="mcp-add">
-                      <input
-                        value={mcpDraft.label}
-                        onChange={(event) =>
-                          setMcpDraft((current) => ({
-                            ...current,
-                            label: event.target.value,
-                          }))
-                        }
-                        placeholder="label"
-                        aria-label="MCP server label"
-                      />
-                      <input
-                        value={mcpDraft.url}
-                        onChange={(event) =>
-                          setMcpDraft((current) => ({
-                            ...current,
-                            url: event.target.value,
-                          }))
-                        }
-                        placeholder="https://host/mcp"
-                        aria-label="MCP server URL"
-                      />
-                      <button
-                        onClick={addMcpServer}
-                        disabled={
-                          !MCP_LABEL_PATTERN.test(mcpDraft.label.trim()) ||
-                          !isValidMcpUrl(mcpDraft.url.trim())
-                        }
-                      >
-                        Add
-                      </button>
+                      </div>
+                    )}
+                    <div className="tools-section">
+                      <span className="overline">PROVIDER TOOLS</span>
+                      {TOOL_SUPPORT[provider].webSearch ||
+                      TOOL_SUPPORT[provider].mcp ? (
+                        <>
+                          <div className="tools-grid">
+                            {TOOL_SUPPORT[provider].webSearch && (
+                              <label className="tool-toggle">
+                                <input
+                                  type="checkbox"
+                                  checked={currentSettings.webSearch}
+                                  onChange={(event) =>
+                                    updateProviderSettings({
+                                      webSearch: event.target.checked,
+                                    })
+                                  }
+                                />
+                                <span>
+                                  <strong>Web search</strong>
+                                  <small>
+                                    Provider-managed searches for fresh
+                                    information
+                                  </small>
+                                </span>
+                              </label>
+                            )}
+                            {TOOL_SUPPORT[provider].xSearch && (
+                              <label className="tool-toggle">
+                                <input
+                                  type="checkbox"
+                                  checked={currentSettings.xSearch}
+                                  onChange={(event) =>
+                                    updateProviderSettings({
+                                      xSearch: event.target.checked,
+                                    })
+                                  }
+                                />
+                                <span>
+                                  <strong>X search</strong>
+                                  <small>Search X posts through Grok</small>
+                                </span>
+                              </label>
+                            )}
+                            {TOOL_SUPPORT[provider].codeInterpreter && (
+                              <label className="tool-toggle">
+                                <input
+                                  type="checkbox"
+                                  checked={currentSettings.codeInterpreter}
+                                  onChange={(event) =>
+                                    updateProviderSettings({
+                                      codeInterpreter: event.target.checked,
+                                    })
+                                  }
+                                />
+                                <span>
+                                  <strong>Code interpreter</strong>
+                                  <small>
+                                    Run Python in the provider sandbox
+                                  </small>
+                                </span>
+                              </label>
+                            )}
+                            {TOOL_SUPPORT[provider].fileSearch && (
+                              <label className="tool-toggle">
+                                <input
+                                  type="checkbox"
+                                  checked={currentSettings.fileSearch}
+                                  onChange={(event) =>
+                                    updateProviderSettings({
+                                      fileSearch: event.target.checked,
+                                    })
+                                  }
+                                />
+                                <span>
+                                  <strong>File search</strong>
+                                  <small>Search vector stores by ID</small>
+                                </span>
+                              </label>
+                            )}
+                          </div>
+                          {TOOL_SUPPORT[provider].fileSearch &&
+                            currentSettings.fileSearch && (
+                              <label className="tools-field">
+                                Vector store IDs
+                                <input
+                                  value={currentSettings.vectorStoreId}
+                                  onChange={(event) =>
+                                    updateProviderSettings({
+                                      vectorStoreId: event.target.value,
+                                    })
+                                  }
+                                  placeholder="vs_… (comma-separated)"
+                                />
+                              </label>
+                            )}
+                          <div className="mcp-block">
+                            <span className="overline">MCP SERVERS</span>
+                            {mcpServers.map((server) => {
+                              const reachable = isMcpUrlAllowedForProvider(
+                                server.url,
+                                provider,
+                              );
+                              const offline =
+                                reachable &&
+                                mcpReachability[server.id] === false;
+                              return (
+                                <div
+                                  className={`mcp-row${reachable && !offline ? "" : " unavailable"}`}
+                                  key={server.id}
+                                >
+                                  <label
+                                    title={
+                                      !reachable
+                                        ? `${currentProvider.name} runs MCP calls from the cloud and can't reach a plain http:// server — use an https:// URL.`
+                                        : offline
+                                          ? "This server didn't respond to a reachability check and won't be offered to the model until it does."
+                                          : undefined
+                                    }
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={server.enabled}
+                                      onChange={(event) =>
+                                        setMcpServers((current) =>
+                                          current.map((item) =>
+                                            item.id === server.id
+                                              ? {
+                                                  ...item,
+                                                  enabled: event.target.checked,
+                                                }
+                                              : item,
+                                          ),
+                                        )
+                                      }
+                                    />
+                                    <span>
+                                      <strong>{server.label}</strong>
+                                      {offline && (
+                                        <span className="skill-badge">
+                                          offline
+                                        </span>
+                                      )}
+                                      <small>{server.url}</small>
+                                    </span>
+                                  </label>
+                                  <button
+                                    className="icon-button"
+                                    onClick={() =>
+                                      setMcpServers((current) =>
+                                        current.filter(
+                                          (item) => item.id !== server.id,
+                                        ),
+                                      )
+                                    }
+                                    aria-label={`Remove ${server.label}`}
+                                  >
+                                    <Icon name="trash" size={13} />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                            <div className="mcp-add">
+                              <input
+                                value={mcpDraft.label}
+                                onChange={(event) =>
+                                  setMcpDraft((current) => ({
+                                    ...current,
+                                    label: event.target.value,
+                                  }))
+                                }
+                                placeholder="label"
+                                aria-label="MCP server label"
+                              />
+                              <input
+                                value={mcpDraft.url}
+                                onChange={(event) =>
+                                  setMcpDraft((current) => ({
+                                    ...current,
+                                    url: event.target.value,
+                                  }))
+                                }
+                                placeholder="https://host/mcp"
+                                aria-label="MCP server URL"
+                              />
+                              <button
+                                onClick={addMcpServer}
+                                disabled={
+                                  !MCP_LABEL_PATTERN.test(
+                                    mcpDraft.label.trim(),
+                                  ) || !isValidMcpUrl(mcpDraft.url.trim())
+                                }
+                              >
+                                Add
+                              </button>
+                            </div>
+                            <small className="mcp-note">
+                              Remote servers run provider-side with approval set
+                              to “never” — only add servers you trust.
+                            </small>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="tools-grid">
+                            <label className="tool-toggle">
+                              <input
+                                type="checkbox"
+                                checked={currentSettings.localRag}
+                                onChange={(event) =>
+                                  updateProviderSettings({
+                                    localRag: event.target.checked,
+                                  })
+                                }
+                              />
+                              <span>
+                                <strong>Local RAG</strong>
+                                <small>
+                                  Chunk and embed attached files via{" "}
+                                  {currentProvider.name}&apos;s /v1/embeddings;
+                                  send only the passages relevant to each
+                                  question
+                                </small>
+                              </span>
+                            </label>
+                          </div>
+                          {currentSettings.localRag && (
+                            <label className="tools-field">
+                              Embedding model
+                              <input
+                                value={currentSettings.embeddingModel}
+                                onChange={(event) =>
+                                  updateProviderSettings({
+                                    embeddingModel: event.target.value,
+                                  })
+                                }
+                                placeholder="auto (nomic, mxbai, bge…)"
+                              />
+                            </label>
+                          )}
+                          <p className="tools-empty">
+                            Server-side tools are not available for local
+                            providers; retrieval runs in this browser instead.
+                            Blank embedding model auto-picks from the
+                            server&apos;s model list.
+                          </p>
+                        </>
+                      )}
                     </div>
-                    <small className="mcp-note">
-                      Remote servers run provider-side with approval set to
-                      “never” — only add servers you trust.
-                    </small>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="tools-grid">
-                    <label className="tool-toggle">
-                      <input
-                        type="checkbox"
-                        checked={currentSettings.localRag}
-                        onChange={(event) =>
-                          updateProviderSettings({
-                            localRag: event.target.checked,
-                          })
-                        }
-                      />
-                      <span>
-                        <strong>Local RAG</strong>
-                        <small>
-                          Chunk and embed attached files via{" "}
-                          {currentProvider.name}&apos;s /v1/embeddings; send
-                          only the passages relevant to each question
-                        </small>
-                      </span>
-                    </label>
-                  </div>
-                  {currentSettings.localRag && (
-                    <label className="tools-field">
-                      Embedding model
-                      <input
-                        value={currentSettings.embeddingModel}
-                        onChange={(event) =>
-                          updateProviderSettings({
-                            embeddingModel: event.target.value,
-                          })
-                        }
-                        placeholder="auto (nomic, mxbai, bge…)"
-                      />
-                    </label>
-                  )}
-                  <p className="tools-empty">
-                    Server-side tools are not available for local providers;
-                    retrieval runs in this browser instead. Blank embedding
-                    model auto-picks from the server&apos;s model list.
-                  </p>
-                </>
-              )}
-            </div>
-            <div className="tools-section">
-              <span className="overline">MEMORY</span>
-              <div className="tools-grid">
-                <label className="tool-toggle priority-toggle">
-                  <input
-                    type="checkbox"
-                    checked={memoryEnabled}
-                    onChange={(event) => setMemoryEnabled(event.target.checked)}
-                  />
-                  <span>
-                    <strong>Enable memory</strong>
-                    <small>
-                      Let the assistant remember short details on request and
-                      fold them into future system prompts. Stored only in this
-                      browser.
-                    </small>
-                  </span>
-                </label>
-              </div>
-              {memoryEnabled && (
-                <>
-                  <label className="tools-field">
-                    Memory limit
-                    <input
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={memoryLimit}
-                      onChange={(event) => {
-                        const next = clampMemoryLimit(
-                          Number(event.target.value),
-                        );
-                        setMemoryLimit(next);
-                        updateMemories((current) =>
-                          withMemoryLimitApplied(current, next),
-                        );
-                      }}
-                    />
-                  </label>
-                  <div className="memory-add">
-                    <input
-                      value={memoryDraft}
-                      maxLength={MEMORY_TEXT_MAX_LENGTH}
-                      onChange={(event) => setMemoryDraft(event.target.value)}
-                      placeholder="Add a memory manually…"
-                      aria-label="New memory text"
-                    />
-                    <button
-                      onClick={() => {
-                        updateMemories((current) =>
-                          withMemoryAdded(current, memoryDraft, memoryLimit),
-                        );
-                        setMemoryDraft("");
-                      }}
-                      disabled={!memoryDraft.trim()}
-                    >
-                      Add
-                    </button>
-                  </div>
-                  {memories.length ? (
-                    <>
-                      <div className="memory-list">
-                        {memories.map((memory, index) => (
-                          <div
-                            className="memory-row"
-                            key={`${index}-${memory}`}
-                          >
-                            <span>{memory}</span>
-                            <button
-                              className="icon-button"
-                              onClick={() =>
+                  </>
+                )}
+                {settingsTab === "memory" && (
+                  <>
+                    <div className="tools-section">
+                      <span className="overline">MEMORY</span>
+                      <div className="tools-grid">
+                        <label className="tool-toggle priority-toggle">
+                          <input
+                            type="checkbox"
+                            checked={memoryEnabled}
+                            onChange={(event) =>
+                              setMemoryEnabled(event.target.checked)
+                            }
+                          />
+                          <span>
+                            <strong>Enable memory</strong>
+                            <small>
+                              Let the assistant remember short details on
+                              request and fold them into future system prompts.
+                              Stored only in this browser.
+                            </small>
+                          </span>
+                        </label>
+                      </div>
+                      {memoryEnabled && (
+                        <>
+                          <label className="tools-field">
+                            Memory limit
+                            <input
+                              type="number"
+                              min={1}
+                              step={1}
+                              value={memoryLimit}
+                              onChange={(event) => {
+                                const next = clampMemoryLimit(
+                                  Number(event.target.value),
+                                );
+                                setMemoryLimit(next);
                                 updateMemories((current) =>
-                                  withMemoryRemovedAt(current, index),
-                                )
+                                  withMemoryLimitApplied(current, next),
+                                );
+                              }}
+                            />
+                          </label>
+                          <div className="memory-add">
+                            <input
+                              value={memoryDraft}
+                              maxLength={MEMORY_TEXT_MAX_LENGTH}
+                              onChange={(event) =>
+                                setMemoryDraft(event.target.value)
                               }
-                              aria-label={`Delete memory ${index + 1}`}
+                              placeholder="Add a memory manually…"
+                              aria-label="New memory text"
+                            />
+                            <button
+                              onClick={() => {
+                                updateMemories((current) =>
+                                  withMemoryAdded(
+                                    current,
+                                    memoryDraft,
+                                    memoryLimit,
+                                  ),
+                                );
+                                setMemoryDraft("");
+                              }}
+                              disabled={!memoryDraft.trim()}
                             >
-                              <Icon name="trash" size={13} />
+                              Add
                             </button>
                           </div>
-                        ))}
-                      </div>
+                          {memories.length ? (
+                            <>
+                              <div className="memory-list">
+                                {memories.map((memory, index) => (
+                                  <div
+                                    className="memory-row"
+                                    key={`${index}-${memory}`}
+                                  >
+                                    <span>{memory}</span>
+                                    <button
+                                      className="icon-button"
+                                      onClick={() =>
+                                        updateMemories((current) =>
+                                          withMemoryRemovedAt(current, index),
+                                        )
+                                      }
+                                      aria-label={`Delete memory ${index + 1}`}
+                                    >
+                                      <Icon name="trash" size={13} />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="connection-row">
+                                <button
+                                  className="test-button"
+                                  onClick={() => updateMemories(() => [])}
+                                >
+                                  Clear all memories
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <p className="tools-empty">
+                              No memories saved yet.
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+                {settingsTab === "skills" && (
+                  <>
+                    <div className="tools-section">
+                      <span className="overline">SKILLS</span>
+                      <p className="tools-empty">
+                        Named instruction packages the assistant loads on demand
+                        — it sees each enabled skill&apos;s name and
+                        description, and calls a tool to pull the full
+                        instructions when a request matches.
+                      </p>
+                      {skills.length ? (
+                        <div className="skill-list">
+                          {skills.map((skill) => (
+                            <div className="skill-row" key={skill.id}>
+                              <label>
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(skillPreferences[skill.id])}
+                                  onChange={(event) =>
+                                    setSkillPreferences((current) =>
+                                      withSkillPreferenceSet(
+                                        current,
+                                        skill.id,
+                                        event.target.checked,
+                                      ),
+                                    )
+                                  }
+                                />
+                                <span>
+                                  <strong>{skill.name}</strong>
+                                  {skill.resources.length ? (
+                                    <span className="skill-badge">
+                                      {skill.resources.length === 1
+                                        ? "1 resource"
+                                        : `${skill.resources.length} resources`}
+                                    </span>
+                                  ) : null}
+                                  {skill.description && (
+                                    <small>{skill.description}</small>
+                                  )}
+                                </span>
+                              </label>
+                              <div className="skill-row-actions">
+                                <button
+                                  className="icon-button"
+                                  onClick={() => exportSkill(skill)}
+                                  aria-label={`Export ${skill.name}`}
+                                  title={`Export ${skill.name} as SKILL.md`}
+                                >
+                                  <Icon name="download" size={13} />
+                                </button>
+                                <button
+                                  className="icon-button"
+                                  onClick={() => removeSkill(skill.id)}
+                                  aria-label={`Remove ${skill.name}`}
+                                >
+                                  <Icon name="trash" size={13} />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="tools-empty">
+                          No skills yet. Upload a SKILL.md file to get started.
+                        </p>
+                      )}
                       <div className="connection-row">
                         <button
                           className="test-button"
-                          onClick={() => updateMemories(() => [])}
+                          onClick={() => skillFileRef.current?.click()}
                         >
-                          Clear all memories
+                          <Icon name="upload" size={15} /> Upload skill
                         </button>
                       </div>
-                    </>
-                  ) : (
-                    <p className="tools-empty">No memories saved yet.</p>
-                  )}
-                </>
-              )}
-            </div>
-            <div className="tools-section">
-              <span className="overline">SKILLS</span>
-              <p className="tools-empty">
-                Named instruction packages the assistant loads on demand — it
-                sees each enabled skill&apos;s name and description, and calls a
-                tool to pull the full instructions when a request matches.
-              </p>
-              {skills.length ? (
-                <div className="skill-list">
-                  {skills.map((skill) => (
-                    <div className="skill-row" key={skill.id}>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={Boolean(skillPreferences[skill.id])}
-                          onChange={(event) =>
-                            setSkillPreferences((current) =>
-                              withSkillPreferenceSet(
-                                current,
-                                skill.id,
-                                event.target.checked,
-                              ),
-                            )
-                          }
-                        />
-                        <span>
-                          <strong>{skill.name}</strong>
-                          {skill.resources.length ? (
-                            <span className="skill-badge">
-                              {skill.resources.length === 1
-                                ? "1 resource"
-                                : `${skill.resources.length} resources`}
-                            </span>
-                          ) : null}
-                          {skill.description && (
-                            <small>{skill.description}</small>
-                          )}
-                        </span>
-                      </label>
-                      <div className="skill-row-actions">
-                        <button
-                          className="icon-button"
-                          onClick={() => exportSkill(skill)}
-                          aria-label={`Export ${skill.name}`}
-                          title={`Export ${skill.name} as SKILL.md`}
-                        >
-                          <Icon name="download" size={13} />
-                        </button>
-                        <button
-                          className="icon-button"
-                          onClick={() => removeSkill(skill.id)}
-                          aria-label={`Remove ${skill.name}`}
-                        >
-                          <Icon name="trash" size={13} />
-                        </button>
-                      </div>
+                      <input
+                        ref={skillFileRef}
+                        type="file"
+                        accept=".md,.markdown,text/markdown"
+                        multiple
+                        hidden
+                        onChange={(event) => void handleSkillUpload(event)}
+                      />
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="tools-empty">
-                  No skills yet. Upload a SKILL.md file to get started.
-                </p>
-              )}
-              <div className="connection-row">
-                <button
-                  className="test-button"
-                  onClick={() => skillFileRef.current?.click()}
-                >
-                  <Icon name="upload" size={15} /> Upload skill
-                </button>
+                  </>
+                )}
+                {settingsTab === "model" && (
+                  <>
+                    <div className="connection-row">
+                      <button
+                        className="test-button"
+                        onClick={() => setModelsRefresh((count) => count + 1)}
+                      >
+                        <Icon name="refresh" size={15} /> Refresh models
+                      </button>
+                      <p
+                        className={
+                          modelStatus.toLowerCase().includes("could not") ||
+                          modelStatus.toLowerCase().includes("failed") ||
+                          modelStatus.toLowerCase().includes("requires")
+                            ? "bad"
+                            : ""
+                        }
+                      >
+                        {modelStatus}
+                      </p>
+                    </div>
+                    <div className="settings-note">
+                      <span>i</span>
+                      <p>
+                        <strong>Responses API only.</strong> smoketest sends the
+                        same <code>/v1/responses</code> request shape to every
+                        provider. Chat Completions and provider-specific SDKs
+                        are intentionally excluded.
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
-              <input
-                ref={skillFileRef}
-                type="file"
-                accept=".md,.markdown,text/markdown"
-                multiple
-                hidden
-                onChange={(event) => void handleSkillUpload(event)}
-              />
-            </div>
-            <div className="connection-row">
-              <button
-                className="test-button"
-                onClick={() => setModelsRefresh((count) => count + 1)}
-              >
-                <Icon name="refresh" size={15} /> Refresh models
-              </button>
-              <p
-                className={
-                  modelStatus.toLowerCase().includes("could not") ||
-                  modelStatus.toLowerCase().includes("failed") ||
-                  modelStatus.toLowerCase().includes("requires")
-                    ? "bad"
-                    : ""
-                }
-              >
-                {modelStatus}
-              </p>
-            </div>
-            <div className="settings-note">
-              <span>i</span>
-              <p>
-                <strong>Responses API only.</strong> smoketest sends the same{" "}
-                <code>/v1/responses</code> request shape to every provider. Chat
-                Completions and provider-specific SDKs are intentionally
-                excluded.
-              </p>
             </div>
             <button
               className="save-settings"

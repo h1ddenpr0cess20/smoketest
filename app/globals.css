@@ -2018,8 +2018,10 @@ body.desktop-app .topbar button {
 }
 .settings-panel {
   width: min(720px, 100%);
-  max-height: calc(100vh - 44px);
-  overflow-y: auto;
+  height: min(680px, calc(100vh - 44px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border: 1px solid var(--line-strong);
   border-radius: 16px;
   background: var(--bg);
@@ -2027,9 +2029,68 @@ body.desktop-app .topbar button {
   padding: 24px;
 }
 .settings-head {
+  flex: none;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+}
+.settings-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 18px;
+  margin-top: 18px;
+}
+.settings-tabs {
+  flex: none;
+  width: 108px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 12px;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+}
+.settings-tabs button {
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0 7px 7px 0;
+  color: var(--muted);
+  background: transparent;
+  font-size: 11.5px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.settings-tabs button:hover {
+  color: var(--ink-soft);
+  background: var(--panel);
+}
+.settings-tabs button.is-active {
+  border-left-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+}
+.settings-body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+  padding-bottom: 18px;
+}
+.settings-body > .tools-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.settings-body > .settings-providers:first-child {
+  margin-top: 0;
 }
 .settings-head h2 {
   margin: 6px 0 0;
@@ -2465,7 +2526,9 @@ body.desktop-app .topbar button {
   color: var(--accent);
 }
 .save-settings {
+  flex: none;
   width: 100%;
+  margin-top: 16px;
   border: 0;
   border-radius: 10px;
   background: var(--accent);
@@ -2648,7 +2711,19 @@ body.desktop-app .topbar button {
     bottom: 96px;
   }
   .settings-panel {
+    height: min(620px, calc(100vh - 30px));
     padding: 17px;
+  }
+  .settings-shell {
+    gap: 10px;
+  }
+  .settings-tabs {
+    width: 78px;
+    padding-right: 8px;
+  }
+  .settings-tabs button {
+    padding: 7px 6px;
+    font-size: 10.5px;
   }
   .settings-providers {
     grid-template-columns: 1fr 1fr;

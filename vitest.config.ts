@@ -18,6 +18,7 @@ export default defineConfig({
         "lib/docPaths.ts",
         "lib/downloads.ts",
         "lib/export.ts",
+        "lib/mcpReachability.ts",
         "lib/memory.ts",
         "lib/messageQueue.ts",
         "lib/providers.ts",
