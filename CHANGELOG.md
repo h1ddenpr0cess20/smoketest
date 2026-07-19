@@ -4,7 +4,9 @@ All notable changes to smoketest will be documented in this file.
 
 ## Unreleased
 
-This is an early work-in-progress release. Basic happy-path testing indicates that the implemented features work as intended, but the full provider, model, browser, and deployment matrix has not been exhaustively tested.
+## [1.0.0] - 2026-07-19
+
+First stable release. Basic happy-path testing indicates that the implemented features work as intended, but the full provider, model, browser, and deployment matrix has not been exhaustively tested.
 
 ### Added
 
@@ -12,6 +14,8 @@ This is an early work-in-progress release. Basic happy-path testing indicates th
 - Provider-managed tools, local retrieval, document parsing, exports, and streamed tool activity.
 - OpenAI Code Interpreter output discovery and proxied container-file downloads.
 - An OpenAI-only Fast mode toggle backed by Priority processing.
+- A local memory feature and an agent skills system for persisting durable context and packaged instructions across sessions.
+- An Electron desktop app, packaged for Linux, Windows, and macOS.
 - CI checks, coverage, dependency auditing, a production container, health checks, and tagged Docker publishing.
 
 ### Fixed
