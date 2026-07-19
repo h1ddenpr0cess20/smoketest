@@ -4,6 +4,7 @@ import {
   eventText,
   eventTextItemId,
   finalResponseText,
+  functionCallFromEvent,
   generatedFilesFromEvent,
   generatedFilesFromResponse,
   incompleteReason,
@@ -177,5 +178,66 @@ describe("Responses API stream parsing", () => {
     expect(
       generatedFilesFromEvent({ type: "response.output_item.done", response }),
     ).toEqual([]);
+  });
+});
+
+describe("functionCallFromEvent", () => {
+  it("extracts a completed client-side function call", () => {
+    expect(
+      functionCallFromEvent({
+        type: "response.output_item.done",
+        item: {
+          id: "fc_1",
+          type: "function_call",
+          name: "remember",
+          call_id: "call_1",
+          arguments: '{"memory":"likes dogs"}',
+        },
+      }),
+    ).toEqual({
+      id: "fc_1",
+      callId: "call_1",
+      name: "remember",
+      arguments: '{"memory":"likes dogs"}',
+    });
+  });
+
+  it("defaults missing arguments to an empty object string", () => {
+    const call = functionCallFromEvent({
+      type: "response.output_item.done",
+      item: {
+        id: "fc_1",
+        type: "function_call",
+        name: "forget",
+        call_id: "call_1",
+      },
+    });
+    expect(call?.arguments).toBe("{}");
+  });
+
+  it("ignores non-function-call items and other event types", () => {
+    expect(
+      functionCallFromEvent({
+        type: "response.output_item.added",
+        item: {
+          id: "fc_1",
+          type: "function_call",
+          name: "remember",
+          call_id: "call_1",
+        },
+      }),
+    ).toBeNull();
+    expect(
+      functionCallFromEvent({
+        type: "response.output_item.done",
+        item: { id: "m1", type: "message" },
+      }),
+    ).toBeNull();
+    expect(
+      functionCallFromEvent({
+        type: "response.output_item.done",
+        item: { id: "fc_1", type: "function_call", call_id: "call_1" },
+      }),
+    ).toBeNull();
   });
 });

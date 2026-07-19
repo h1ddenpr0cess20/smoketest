@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import {
   authorizationHeaders,
+  isChatModel,
   isProviderId,
   providerEndpoint,
   PROVIDERS,
@@ -55,6 +56,7 @@ export async function POST(request: NextRequest) {
     const models = (parsed.data ?? [])
       .map((item) => item.id)
       .filter((id): id is string => typeof id === "string")
+      .filter((modelId) => isChatModel(provider, modelId))
       .sort((a, b) => a.localeCompare(b));
     return Response.json({ models });
   } catch (error) {

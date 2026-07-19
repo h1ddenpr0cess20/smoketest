@@ -74,6 +74,41 @@ export function providerEndpoint(
   return `${PROVIDERS[provider].baseUrl}/${resource}`;
 }
 
+// Adapted from wordmark's per-service _isChatModel filters: provider model
+// lists mix in image, audio, and embedding variants that the Responses chat
+// endpoint either rejects or can't use meaningfully.
+const OPENAI_CHAT_PREFIX = /^(gpt-|o\d+(?:-|$))/i;
+const OPENAI_BLOCKED_KEYWORDS = [
+  "preview",
+  "audio",
+  "computer-use",
+  "transcribe",
+  "tts",
+  "image",
+  "search",
+  "realtime",
+];
+const DATED_SNAPSHOT_SUFFIX = /-\d{4}-\d{2}-\d{2}$/;
+const XAI_BLOCKED_KEYWORDS = ["imagine", "image", "video", "voice", "vision"];
+const EMBEDDING_MODEL = /embed/i;
+
+export function isChatModel(provider: ProviderId, modelId: string): boolean {
+  const lowered = modelId.toLowerCase();
+  switch (provider) {
+    case "openai":
+      if (!OPENAI_CHAT_PREFIX.test(modelId)) return false;
+      if (OPENAI_BLOCKED_KEYWORDS.some((word) => lowered.includes(word)))
+        return false;
+      return !DATED_SNAPSHOT_SUFFIX.test(lowered);
+    case "xai":
+      if (!lowered.startsWith("grok-")) return false;
+      return !XAI_BLOCKED_KEYWORDS.some((word) => lowered.includes(word));
+    case "lmstudio":
+    case "ollama":
+      return !EMBEDDING_MODEL.test(modelId);
+  }
+}
+
 export function authorizationHeaders(provider: ProviderId, apiKey: string) {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
