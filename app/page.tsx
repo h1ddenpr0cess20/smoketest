@@ -1575,6 +1575,18 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [attachMenuOpen]);
 
+  // Mobile drawer is an overlay, not part of the page flow, so background
+  // scroll must be locked while it's open or touches leak through to the
+  // conversation behind it.
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [sidebarOpen]);
+
   function createThread() {
     stopRoundtable("stopped");
     const thread = blankThread();

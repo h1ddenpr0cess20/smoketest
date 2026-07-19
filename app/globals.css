@@ -2392,17 +2392,6 @@ select:focus-visible {
     padding: 0 14px;
     gap: 10px;
   }
-  .theme-switch {
-    position: fixed;
-    right: 12px;
-    bottom: 132px;
-    z-index: 12;
-    padding: 2px;
-    border: 1px solid var(--line);
-    border-radius: 9px;
-    background: var(--panel);
-    box-shadow: 0 8px 30px var(--shadow);
-  }
   .mode-switch {
     position: fixed;
     left: 50%;
@@ -2529,8 +2518,7 @@ select:focus-visible {
   .composer-foot {
     display: none;
   }
-  .mode-switch,
-  .theme-switch {
+  .mode-switch {
     bottom: 96px;
   }
   .settings-panel {
