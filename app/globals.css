@@ -563,6 +563,25 @@ select:focus-visible {
   gap: 6px;
 }
 
+/* Electron: frameless window, so the topbar doubles as the drag region. */
+body.desktop-app .topbar {
+  -webkit-app-region: drag;
+  -webkit-user-select: none;
+  /* The native window-controls overlay paints over this corner, hiding any border there. */
+  border-bottom-color: transparent;
+  padding-left: clamp(26px, calc(env(titlebar-area-x, 0px) + 14px), 120px);
+  padding-right: clamp(
+    26px,
+    calc(
+      100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 14px
+    ),
+    200px
+  );
+}
+body.desktop-app .topbar button {
+  -webkit-app-region: no-drag;
+}
+
 .plan-style-bar {
   grid-row: 2;
   /* Pinned just under the sticky topbar so the Solo/Roundtable choice stays
@@ -1999,8 +2018,10 @@ select:focus-visible {
 }
 .settings-panel {
   width: min(720px, 100%);
-  max-height: calc(100vh - 44px);
-  overflow-y: auto;
+  height: min(680px, calc(100vh - 44px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border: 1px solid var(--line-strong);
   border-radius: 16px;
   background: var(--bg);
@@ -2008,9 +2029,68 @@ select:focus-visible {
   padding: 24px;
 }
 .settings-head {
+  flex: none;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+}
+.settings-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 18px;
+  margin-top: 18px;
+}
+.settings-tabs {
+  flex: none;
+  width: 108px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 12px;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+}
+.settings-tabs button {
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0 7px 7px 0;
+  color: var(--muted);
+  background: transparent;
+  font-size: 11.5px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.settings-tabs button:hover {
+  color: var(--ink-soft);
+  background: var(--panel);
+}
+.settings-tabs button.is-active {
+  border-left-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+}
+.settings-body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+  padding-bottom: 18px;
+}
+.settings-body > .tools-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.settings-body > .settings-providers:first-child {
+  margin-top: 0;
 }
 .settings-head h2 {
   margin: 6px 0 0;
@@ -2154,18 +2234,21 @@ select:focus-visible {
   grid-column: 1 / -1;
 }
 .tool-toggle input,
-.mcp-row input[type="checkbox"] {
+.mcp-row input[type="checkbox"],
+.skill-row input[type="checkbox"] {
   accent-color: var(--accent);
   margin-top: 2px;
 }
-.tool-toggle strong {
+.tool-toggle strong,
+.skill-row strong {
   display: block;
   color: var(--ink-soft);
   font-size: 11px;
   font-weight: 650;
 }
 .tool-toggle small,
-.mcp-row small {
+.mcp-row small,
+.skill-row small {
   display: block;
   margin-top: 3px;
   color: var(--faint);
@@ -2342,6 +2425,44 @@ select:focus-visible {
   color: var(--muted);
   font: 10px/1.55 var(--font-mono);
 }
+.skill-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+.skill-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 8px 6px 8px 11px;
+}
+.skill-row label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  cursor: pointer;
+}
+.skill-badge {
+  display: inline-block;
+  margin-left: 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: var(--faint);
+  font: 700 8.5px var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.skill-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
 .connection-row {
   display: flex;
   align-items: center;
@@ -2405,7 +2526,9 @@ select:focus-visible {
   color: var(--accent);
 }
 .save-settings {
+  flex: none;
   width: 100%;
+  margin-top: 16px;
   border: 0;
   border-radius: 10px;
   background: var(--accent);
@@ -2588,7 +2711,19 @@ select:focus-visible {
     bottom: 96px;
   }
   .settings-panel {
+    height: min(620px, calc(100vh - 30px));
     padding: 17px;
+  }
+  .settings-shell {
+    gap: 10px;
+  }
+  .settings-tabs {
+    width: 78px;
+    padding-right: 8px;
+  }
+  .settings-tabs button {
+    padding: 7px 6px;
+    font-size: 10.5px;
   }
   .settings-providers {
     grid-template-columns: 1fr 1fr;

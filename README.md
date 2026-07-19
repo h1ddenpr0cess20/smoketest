@@ -51,6 +51,9 @@ Roundtable planning, where several model participants plan a change together:
 - Responsive desktop and mobile workspace
 - Smoke light theme and Ember dark theme
 - Request cancellation and provider-aware error handling
+- Optional local memory: the assistant can remember/forget short user details on request, stored only in the browser and folded into future system prompts
+- Optional skills: upload `SKILL.md` instruction packages the assistant loads on demand via a tool call, keeping the system prompt to just a name and description until one matches
+- Optional Electron desktop app (Linux AppImage, Windows installer, macOS dmg)
 
 ## Run locally
 
@@ -97,6 +100,12 @@ Threads, attached file contents, API keys, and settings are stored in the browse
 
 This design makes local providers reachable from the Next.js server running on the same computer. If you deploy smoketest elsewhere, `127.0.0.1` refers to that deployment host—not the visitor's computer—so LM Studio and Ollama should be used with the app running locally.
 
+## Safety and intended use
+
+smoketest is a coding tool. It is **not intended for children** and must not be used as a companion, friend, therapist, or romantic partner. AI output—including generated code—can be inaccurate, insecure, or inappropriate; never rely on smoketest for crisis response, professional advice, or safety-critical decisions. MCP tool calls run without a manual approval step in this UI, so only connect a server you trust.
+
+Read the [AI Output Disclaimer and Conditions of Use](docs/ai-output-disclaimer.md), [Not a Companion](docs/not-a-companion.md), and [Security](docs/security.md) docs before using or deploying the app. The [documentation index](docs/README.md) summarizes these boundaries.
+
 ## Quality checks
 
 ```bash
@@ -114,6 +123,24 @@ docker run --rm -p 3000:3000 smoketest
 ```
 
 The container exposes a health check at `/api/health`. Remember that local-provider URLs resolve from inside the container; reaching LM Studio or Ollama on the host may require platform-specific host networking or URL changes that smoketest does not currently expose.
+
+## Desktop app
+
+smoketest ships an optional Electron wrapper (`electron/main.cjs`). It runs the same Next.js app as a local server on `127.0.0.1` and loads it in a frameless `BrowserWindow` with a native title-bar overlay — the existing top bar doubles as the window's drag region. All app logic and the browser/local-provider trust boundary described above are unchanged; the desktop shell only adds native integration a browser tab can't provide (downloads saved straight to the OS Downloads folder, external links opened in the system browser, single-instance focus).
+
+```bash
+npm run electron        # build and launch the desktop app
+npm run electron:run    # relaunch the existing build without rebuilding
+```
+
+To package a distributable:
+
+```bash
+npm run electron:dist
+# -> release/
+```
+
+Produces an `AppImage` on Linux, an `nsis` installer on Windows, and a `dmg`/`zip` on macOS, per the `build` config in `package.json`. Platform-specific variants (`electron:dist:linux`, `electron:dist:win`, `electron:dist:mac`) are also available, and are what `.github/workflows/desktop-release.yml` runs to attach installers to a published GitHub release.
 
 ## Project origin
 

@@ -52,6 +52,8 @@ export type ToolRequest = {
   vectorStoreIds?: string[];
   mcpServers?: { label: string; url: string }[];
   memory?: boolean;
+  skills?: boolean;
+  skillResources?: boolean;
 };
 
 // Client-side function tools, executed locally by app/page.tsx's
@@ -104,6 +106,65 @@ const MEMORY_TOOL_DEFINITIONS: Record<string, unknown>[] = [
       additionalProperties: false,
     },
     strict: false,
+  },
+];
+
+// Skill tools: activate_skill loads a matching skill, read_skill_resource reads its bundled files.
+export const SKILL_TOOL_NAMES = [
+  "activate_skill",
+  "read_skill_resource",
+] as const;
+export type SkillToolName = (typeof SKILL_TOOL_NAMES)[number];
+
+export function isSkillToolName(value: unknown): value is SkillToolName {
+  return (
+    typeof value === "string" &&
+    (SKILL_TOOL_NAMES as readonly string[]).includes(value)
+  );
+}
+
+const SKILL_TOOL_DEFINITIONS: Record<string, unknown>[] = [
+  {
+    type: "function",
+    name: "activate_skill",
+    description:
+      "Load the full instructions for one of the available skills before using it. Call this when a user's request matches a skill listed in the system prompt, then follow the returned instructions for the rest of your reply.",
+    parameters: {
+      type: "object",
+      properties: {
+        skill_id: {
+          type: "string",
+          description:
+            "The id of the skill to activate, exactly as listed in the available skills.",
+        },
+      },
+      required: ["skill_id"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    type: "function",
+    name: "read_skill_resource",
+    description:
+      "Read a named reference file bundled with an activated skill. Call this only after activate_skill lists one or more resources for the skill.",
+    parameters: {
+      type: "object",
+      properties: {
+        skill_id: {
+          type: "string",
+          description: "The id of the skill that owns the resource.",
+        },
+        resource_name: {
+          type: "string",
+          description:
+            "The exact name of the resource to read, as listed by activate_skill.",
+        },
+      },
+      required: ["skill_id", "resource_name"],
+      additionalProperties: false,
+    },
+    strict: true,
   },
 ];
 
@@ -181,5 +242,9 @@ export function buildTools(
     }
   }
   if (request.memory) tools.push(...MEMORY_TOOL_DEFINITIONS);
+  if (request.skills) {
+    tools.push(SKILL_TOOL_DEFINITIONS[0]);
+    if (request.skillResources) tools.push(SKILL_TOOL_DEFINITIONS[1]);
+  }
   return tools;
 }

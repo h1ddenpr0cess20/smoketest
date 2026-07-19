@@ -3,6 +3,7 @@ import {
   buildTools,
   isMcpUrlAllowedForProvider,
   isMemoryToolName,
+  isSkillToolName,
 } from "../lib/tools";
 import { toolActivity } from "../lib/stream";
 
@@ -132,6 +133,37 @@ describe("provider tool building", () => {
     expect(isMemoryToolName("other")).toBe(false);
     expect(isMemoryToolName(42)).toBe(false);
   });
+
+  it("appends the skill tools for every provider when requested", () => {
+    for (const provider of ["openai", "xai", "lmstudio", "ollama"] as const) {
+      const withoutResources = buildTools(provider, { skills: true });
+      expect(withoutResources.map((tool) => tool.name)).toEqual([
+        "activate_skill",
+      ]);
+      const withResources = buildTools(provider, {
+        skills: true,
+        skillResources: true,
+      });
+      expect(withResources.map((tool) => tool.name)).toEqual([
+        "activate_skill",
+        "read_skill_resource",
+      ]);
+      expect(withResources.every((tool) => tool.type === "function")).toBe(
+        true,
+      );
+    }
+    expect(buildTools("openai", { skills: false })).toEqual([]);
+    expect(
+      buildTools("openai", { skills: false, skillResources: true }),
+    ).toEqual([]);
+  });
+
+  it("recognizes only the skill tool names", () => {
+    expect(isSkillToolName("activate_skill")).toBe(true);
+    expect(isSkillToolName("read_skill_resource")).toBe(true);
+    expect(isSkillToolName("other")).toBe(false);
+    expect(isSkillToolName(42)).toBe(false);
+  });
 });
 
 describe("tool activity extraction", () => {
@@ -193,5 +225,24 @@ describe("tool activity extraction", () => {
         item: { id: "fc_3", type: "function_call", name: "other_tool" },
       }),
     ).toEqual({ id: "fc_3", label: "Function: other_tool" });
+  });
+
+  it("labels skill tool calls", () => {
+    expect(
+      toolActivity({
+        type: "response.output_item.added",
+        item: { id: "fc_4", type: "function_call", name: "activate_skill" },
+      }),
+    ).toEqual({ id: "fc_4", label: "Activate skill" });
+    expect(
+      toolActivity({
+        type: "response.output_item.added",
+        item: {
+          id: "fc_5",
+          type: "function_call",
+          name: "read_skill_resource",
+        },
+      }),
+    ).toEqual({ id: "fc_5", label: "Read skill resource" });
   });
 });
