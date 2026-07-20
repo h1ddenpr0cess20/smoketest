@@ -79,6 +79,17 @@ A useful experimental workflow is to use xAI or a local model for the **Plan** a
 
 The transcript is sent again on each turn, so OpenAI can use the earlier plan. Code Interpreter only sees the conversation and files included in the request; it does not gain direct access to your local repository or filesystem. Attach any source material it needs, and explicitly ask it to create and link the ZIP.
 
+## MCP shell access with LM Studio
+
+Another useful workflow: give a local LM Studio model real shell access via MCP, using the [Shell MCP server](https://github.com/h1ddenpr0cess20/mcp/tree/main/shell_mcp) from the [h1ddenpr0cess20/mcp](https://github.com/h1ddenpr0cess20/mcp) collection.
+
+1. From the `mcp` repo, install and run the server: `pip install -r shell_mcp/requirements.txt && python shell_mcp/server.py`. It serves HTTP on `http://127.0.0.1:9610/mcp` and either connects to an existing SSH host or auto-provisions an isolated VirtualBox VM as the sandbox, depending on `shell_mcp/.env`.
+2. Start LM Studio's local server (Developer tab) with a tool-capable model loaded.
+3. In smoketest, select LM Studio as the provider, open **Provider settings**, and under **MCP servers** add a label (e.g. `shell`) with URL `http://127.0.0.1:9610/mcp`, then enable it. Local providers allow plain `http://` MCP URLs since the server runs alongside smoketest.
+4. Ask the model to run commands, read/write files, or pull system info from the sandbox — it calls the server's tools directly, in the same turn, with no separate approval step.
+
+MCP tool calls run with `require_approval: "never"`, so only point this at a server and sandbox you trust. The same repo's `docker_shell_mcp` (Docker-backed, port 9620) and `webshell_mcp` (shell plus web search in one VM, port 9710) follow the same steps if you'd rather sandbox in a container or add web search alongside shell access.
+
 ## Generated-file caveats
 
 Generated-file handling is provider-dependent and should be considered experimental.
