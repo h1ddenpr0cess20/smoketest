@@ -1406,7 +1406,11 @@ const MessageView = memo(function MessageView({
               <p className="user-text">{message.content}</p>
             )}
             {isStreaming && (
-              <span className="stream-cursor" aria-label="Writing" />
+              <span className="thinking" aria-label="Writing">
+                <span />
+                <span />
+                <span />
+              </span>
             )}
           </div>
         ) : (
