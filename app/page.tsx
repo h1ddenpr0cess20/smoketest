@@ -5221,7 +5221,10 @@ export default function Home() {
                         Named instruction packages the assistant loads on demand
                         — it sees each enabled skill&apos;s name and
                         description, and calls a tool to pull the full
-                        instructions when a request matches.
+                        instructions when a request matches. If it doesn&apos;t
+                        trigger on its own, force one with{" "}
+                        <code>/skill name</code> in chat — loaded skills show a
+                        badge here and can be unloaded from either place.
                       </p>
                       {skills.length ? (
                         <div className="skill-list">
@@ -5243,6 +5246,14 @@ export default function Home() {
                                 />
                                 <span>
                                   <strong>{skill.name}</strong>
+                                  {forcedSkillIds.includes(skill.id) ? (
+                                    <span
+                                      className="skill-badge is-loaded"
+                                      title={`Force-loaded via /skill ${skill.name} — applies for the rest of the session`}
+                                    >
+                                      Loaded
+                                    </span>
+                                  ) : null}
                                   {skill.resources.length ? (
                                     <span className="skill-badge">
                                       {skill.resources.length === 1
@@ -5256,6 +5267,23 @@ export default function Home() {
                                 </span>
                               </label>
                               <div className="skill-row-actions">
+                                {forcedSkillIds.includes(skill.id) && (
+                                  <button
+                                    className="icon-button"
+                                    onClick={() =>
+                                      setForcedSkillIds((current) =>
+                                        withForcedSkillToggled(
+                                          current,
+                                          skill.id,
+                                        ),
+                                      )
+                                    }
+                                    aria-label={`Unload ${skill.name}`}
+                                    title={`Unload ${skill.name} (force-loaded via /skill)`}
+                                  >
+                                    <Icon name="close" size={13} />
+                                  </button>
+                                )}
                                 <button
                                   className="icon-button"
                                   onClick={() => exportSkill(skill)}
