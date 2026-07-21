@@ -16,7 +16,15 @@ export async function probeMcpServer(url: string): Promise<boolean> {
       signal: AbortSignal.timeout(MCP_PROBE_TIMEOUT_MS),
     });
     return true;
-  } catch {
+  } catch (error) {
+    // A timeout only means the probe didn't finish in time, not that the
+    // server is down — a slow-but-alive server (cold start, paused
+    // debugger, loaded dev proxy) shouldn't get marked offline and lose
+    // its tools. Only a genuine connection failure (refused, DNS, etc.)
+    // counts as unreachable.
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      return true;
+    }
     return false;
   }
 }
