@@ -901,6 +901,7 @@ async function streamAssistant(
   let priorText = "";
   const activityLog: ToolActivityEntry[] = [];
   const fileList: GeneratedFile[] = [];
+  const activatedSkillIds = new Set<string>();
 
   for (let turn = 0; turn < MAX_TOOL_LOOP_TURNS; turn++) {
     const result = await runResponsesTurn(
@@ -970,6 +971,7 @@ async function streamAssistant(
           call.name,
           call.arguments,
           skillCtx!.getSkills(),
+          activatedSkillIds,
         ).output;
       }
       appended.push(
