@@ -63,6 +63,14 @@ describe("composer commands", () => {
     expect(parseCommand("/compact")).toEqual({ type: "compact" });
   });
 
+  it("parses /skill with a bare or multi-word name", () => {
+    expect(parseCommand("/skill")).toEqual({ type: "skill", name: "" });
+    expect(parseCommand("/skill Frontend Development")).toEqual({
+      type: "skill",
+      name: "Frontend Development",
+    });
+  });
+
   it("parses /search on, off, and bare toggle", () => {
     expect(parseCommand("/search on")).toEqual({
       type: "search",

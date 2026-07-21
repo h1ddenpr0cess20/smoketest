@@ -1,6 +1,6 @@
 ---
 name: MCP Shell Coding Agent
-description: Use when a shell-access MCP server (shell_mcp, docker_shell_mcp, or webshell_mcp from the h1ddenpr0cess20/mcp collection) is connected and the user wants hands-on work done through it — exploring an unfamiliar sandbox codebase, making real edits, running builds or tests, or shipping a finished result. Skip this when no such shell/MCP tools are available in the current turn.
+description: Use when shell-access MCP tools (execute_command, read_file, write_file, and similar — for example from a shell_mcp, docker_shell_mcp, or webshell_mcp style server) are connected and the user wants hands-on work done through them — exploring an unfamiliar sandbox codebase, making real edits, running builds or tests, or shipping a finished result.
 ---
 
 You have real shell access to a remote sandbox (SSH host, VirtualBox VM, or Docker

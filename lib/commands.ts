@@ -6,6 +6,7 @@ export type CommandAction =
   | { type: "compact" }
   | { type: "search"; enabled: boolean | null }
   | { type: "effort"; effort: "low" | "medium" | "high" | null }
+  | { type: "skill"; name: string }
   | { type: "mode"; mode: Mode; prompt: string }
   | { type: "unknown"; command: string };
 
@@ -30,6 +31,10 @@ export const COMMANDS: { command: string; hint: string }[] = [
   {
     command: "/compact",
     hint: "Summarize older turns to free up history budget",
+  },
+  {
+    command: "/skill",
+    hint: "Manually load a skill by name, bypassing auto-trigger (run again to unload)",
   },
 ];
 
@@ -61,6 +66,7 @@ export function parseCommand(input: string): CommandAction | null {
           : null,
     };
   }
+  if (command === "/skill") return { type: "skill", name: remainder };
   const mode = MODE_COMMANDS[command];
   if (mode) return { type: "mode", mode, prompt: remainder };
   return { type: "unknown", command };
