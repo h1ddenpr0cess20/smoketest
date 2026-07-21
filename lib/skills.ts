@@ -59,6 +59,11 @@ export function restoreSeededSkillNames(saved: unknown): string[] {
   return saved.filter((item): item is string => typeof item === "string");
 }
 
+export function restoreForcedSkillIds(saved: unknown): string[] {
+  if (!Array.isArray(saved)) return [];
+  return saved.filter((item): item is string => typeof item === "string");
+}
+
 function slugify(name: string): string {
   return (
     name
@@ -139,6 +144,27 @@ export function enabledSkills(
   return skills.filter((skill) => preferences[skill.id]);
 }
 
+export function withForcedSkillToggled(ids: string[], id: string): string[] {
+  return ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id];
+}
+
+// Case-insensitive lookup for the /skill command: an exact name match wins;
+// otherwise a single unambiguous substring match is used. Returns null when
+// nothing matches, or when the query is too vague to pick one skill.
+export function findSkillByName(
+  skills: SkillDefinition[],
+  query: string,
+): SkillDefinition | null {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return null;
+  const exact = skills.find((skill) => skill.name.toLowerCase() === needle);
+  if (exact) return exact;
+  const partial = skills.filter((skill) =>
+    skill.name.toLowerCase().includes(needle),
+  );
+  return partial.length === 1 ? partial[0] : null;
+}
+
 const RESOURCE_BLOCK =
   /<!--\s*skill:resource\s+name="([^"]+)"\s*-->\n([\s\S]*?)\n<!--\s*\/skill:resource\s*-->/g;
 
@@ -213,6 +239,25 @@ export function skillsForPrompt(skills: SkillDefinition[]): string {
     'with that skill\'s id (the value after "id:") before you answer, then follow the ' +
     "instructions it returns. Do not rely on the one-line description alone, and do not " +
     "mention this process to the user.\n"
+  );
+}
+
+// Full instructions for skills force-loaded via the /skill command, bypassing
+// the model's own activate_skill judgement call for cases where auto-trigger
+// doesn't fire.
+export function forcedSkillsForPrompt(skills: SkillDefinition[]): string {
+  if (!skills.length) return "";
+  const blocks = skills.map((skill) => {
+    const resourceNote = skill.resources.length
+      ? `\n(Resources available via read_skill_resource with skill_id "${skill.id}": ${skill.resources
+          .map((resource) => resource.name)
+          .join(", ")})`
+      : "";
+    return `### ${skill.name}\n${skill.instructions}${resourceNote}`;
+  });
+  return (
+    "\nThe user manually loaded the following skill(s) with /skill. Follow " +
+    `their instructions below for the rest of your replies:\n\n${blocks.join("\n\n")}\n`
   );
 }
 

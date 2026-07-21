@@ -52,7 +52,7 @@ Roundtable planning, where several model participants plan a change together:
 - Smoke light theme and Ember dark theme
 - Request cancellation and provider-aware error handling
 - Optional local memory: the assistant can remember/forget short user details on request, stored only in the browser and folded into future system prompts
-- Optional skills: upload `SKILL.md` instruction packages the assistant loads on demand via a tool call, keeping the system prompt to just a name and description until one matches
+- Optional skills: upload `SKILL.md` instruction packages the assistant loads on demand via a tool call, keeping the system prompt to just a name and description until one matches — or force-load one yourself with `/skill <name>` when auto-trigger doesn't fire
 - Optional Electron desktop app (Linux AppImage, Windows installer, macOS dmg)
 
 ## Run locally

@@ -102,13 +102,17 @@ import {
 } from "@/lib/memory";
 import {
   enabledSkills,
+  findSkillByName,
+  forcedSkillsForPrompt,
   parseSkillMarkdown,
+  restoreForcedSkillIds,
   restoreSeededSkillNames,
   restoreSkillList,
   restoreSkillPreferences,
   runSkillToolCall,
   serializeSkillMarkdown,
   skillsForPrompt,
+  withForcedSkillToggled,
   withSkillAdded,
   withSkillPreferenceRemoved,
   withSkillPreferenceSet,
@@ -181,6 +185,7 @@ const STORAGE = {
   skills: "smoketest.skills.v1",
   skillPreferences: "smoketest.skill-preferences.v1",
   skillsSeededExamples: "smoketest.skills-seeded.v1",
+  forcedSkills: "smoketest.forced-skills.v1",
 } as const;
 
 const ROUNDTABLE_COLORS = [
@@ -1595,6 +1600,9 @@ export default function Home() {
     Record<string, boolean>
   >({});
   const [seededSkillNames, setSeededSkillNames] = useState<string[]>([]);
+  // Skills force-loaded via /skill, independent of each skill's enabled
+  // checkbox — a manual override for when auto-trigger doesn't fire.
+  const [forcedSkillIds, setForcedSkillIds] = useState<string[]>([]);
   // Attachment status lines are keyed by thread so switching sessions shows
   // only the active thread's status without an effect-driven reset.
   const [attachNote, setAttachNote] = useState<{
@@ -1733,6 +1741,15 @@ export default function Home() {
         return [];
       }
     })();
+    const restoredForcedSkillIds = (() => {
+      try {
+        return restoreForcedSkillIds(
+          JSON.parse(localStorage.getItem(STORAGE.forcedSkills) || "null"),
+        );
+      } catch {
+        return [];
+      }
+    })();
     // Seeds bundled example skills once each, by name, so deleting one doesn't resurrect it.
     const seededSkillNameSet = new Set(restoredSeededSkillNames);
     let seededSkills = restoredSkills;
@@ -1774,6 +1791,7 @@ export default function Home() {
       setSkills(seededSkills);
       setSkillPreferences(seededSkillPreferences);
       setSeededSkillNames([...seededSkillNameSet]);
+      setForcedSkillIds(restoredForcedSkillIds);
       setThreads(restoredThreads);
       setActiveId(restoredThreads[0].id);
       setRoundtableStatus(
@@ -1823,6 +1841,10 @@ export default function Home() {
         STORAGE.skillsSeededExamples,
         JSON.stringify(seededSkillNames),
       );
+      localStorage.setItem(
+        STORAGE.forcedSkills,
+        JSON.stringify(forcedSkillIds),
+      );
     } catch {
       // Storage unavailable — settings stay in memory for this session.
     }
@@ -1841,6 +1863,7 @@ export default function Home() {
     skills,
     skillPreferences,
     seededSkillNames,
+    forcedSkillIds,
     hydrated,
   ]);
 
@@ -2034,6 +2057,9 @@ export default function Home() {
 
   function currentToolRequest(): ToolRequest {
     const activeSkills = enabledSkills(skills, skillPreferences);
+    const manualSkills = skills.filter((skill) =>
+      forcedSkillIds.includes(skill.id),
+    );
     return {
       webSearch: currentSettings.webSearch,
       xSearch: currentSettings.xSearch,
@@ -2048,8 +2074,10 @@ export default function Home() {
         mcpReachability,
       ).map(({ label, url }) => ({ label, url })),
       memory: memoryEnabled,
-      skills: activeSkills.length > 0,
-      skillResources: activeSkills.some((skill) => skill.resources.length > 0),
+      skills: activeSkills.length > 0 || manualSkills.length > 0,
+      skillResources:
+        activeSkills.some((skill) => skill.resources.length > 0) ||
+        manualSkills.some((skill) => skill.resources.length > 0),
     };
   }
 
@@ -2118,7 +2146,9 @@ export default function Home() {
 
   function skillToolContext() {
     return {
-      enabled: enabledSkills(skills, skillPreferences).length > 0,
+      enabled:
+        enabledSkills(skills, skillPreferences).length > 0 ||
+        forcedSkillIds.length > 0,
       getSkills: () => skillsRef.current,
     };
   }
@@ -2174,6 +2204,11 @@ export default function Home() {
       instructions += memoriesForPrompt(memories);
     const activeSkills = enabledSkills(skills, skillPreferences);
     if (activeSkills.length) instructions += skillsForPrompt(activeSkills);
+    const manualSkills = skills.filter((skill) =>
+      forcedSkillIds.includes(skill.id),
+    );
+    if (manualSkills.length)
+      instructions += forcedSkillsForPrompt(manualSkills);
     return instructions;
   }
 
@@ -3112,6 +3147,41 @@ export default function Home() {
       if (command.type === "compact") {
         setDraft("");
         void compactThread(activeThread.id);
+        return;
+      }
+      if (command.type === "skill") {
+        const query = command.name.trim();
+        const allSkills = skillsRef.current;
+        if (!query) {
+          appendNotice(
+            allSkills.length
+              ? `Usage: \`/skill <name>\`. Available: ${allSkills
+                  .map((skill) => skill.name)
+                  .join(", ")}.`
+              : "No skills available yet. Add one in Settings → Skills.",
+          );
+          setDraft("");
+          return;
+        }
+        const target = findSkillByName(allSkills, query);
+        if (!target) {
+          appendNotice(
+            `No skill matches "${query}". Available: ${
+              allSkills.map((skill) => skill.name).join(", ") || "none"
+            }.`,
+          );
+          setDraft("");
+          return;
+        }
+        const next = withForcedSkillToggled(forcedSkillIds, target.id);
+        setForcedSkillIds(next);
+        appendNotice(
+          next.includes(target.id)
+            ? `Loaded skill "${target.name}" — its instructions apply for the rest of this session. Run \`/skill ${target.name}\` again to unload.`
+            : `Unloaded skill "${target.name}".`,
+          false,
+        );
+        setDraft("");
         return;
       }
       if (command.type === "search") {

@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   enabledSkills,
+  findSkillByName,
+  forcedSkillsForPrompt,
   parseSkillMarkdown,
+  restoreForcedSkillIds,
   restoreSeededSkillNames,
   restoreSkillList,
   restoreSkillPreferences,
   runSkillToolCall,
   serializeSkillMarkdown,
   skillsForPrompt,
+  withForcedSkillToggled,
   withSkillAdded,
   withSkillPreferenceRemoved,
   withSkillPreferenceSet,
@@ -88,6 +92,16 @@ describe("restoreSeededSkillNames", () => {
 
   it("rejects non-array input", () => {
     expect(restoreSeededSkillNames(null)).toEqual([]);
+  });
+});
+
+describe("restoreForcedSkillIds", () => {
+  it("keeps only strings", () => {
+    expect(restoreForcedSkillIds(["a", 2, "b", null])).toEqual(["a", "b"]);
+  });
+
+  it("rejects non-array input", () => {
+    expect(restoreForcedSkillIds(null)).toEqual([]);
   });
 });
 
@@ -182,6 +196,42 @@ describe("enabledSkills", () => {
   });
 });
 
+describe("withForcedSkillToggled", () => {
+  it("adds an id that isn't present", () => {
+    expect(withForcedSkillToggled([], "user:a")).toEqual(["user:a"]);
+    expect(withForcedSkillToggled(["user:a"], "user:b")).toEqual([
+      "user:a",
+      "user:b",
+    ]);
+  });
+
+  it("removes an id that's already present", () => {
+    expect(withForcedSkillToggled(["user:a", "user:b"], "user:a")).toEqual([
+      "user:b",
+    ]);
+  });
+});
+
+describe("findSkillByName", () => {
+  const other = { ...baseSkill, id: "user:other", name: "Other Skill" };
+  const skills = [baseSkill, other];
+
+  it("matches case-insensitively by exact name", () => {
+    expect(findSkillByName(skills, "test skill")).toEqual(baseSkill);
+    expect(findSkillByName(skills, "OTHER SKILL")).toEqual(other);
+  });
+
+  it("falls back to a unique substring match", () => {
+    expect(findSkillByName(skills, "Other")).toEqual(other);
+  });
+
+  it("returns null for no match, an ambiguous match, or a blank query", () => {
+    expect(findSkillByName(skills, "nope")).toBeNull();
+    expect(findSkillByName(skills, "Skill")).toBeNull();
+    expect(findSkillByName(skills, "  ")).toBeNull();
+  });
+});
+
 describe("serializeSkillMarkdown / parseSkillMarkdown", () => {
   it("round-trips a skill with a bundled resource", () => {
     const skill: SkillDefinition = {
@@ -237,6 +287,25 @@ describe("skillsForPrompt", () => {
 
   it("returns an empty string for no skills", () => {
     expect(skillsForPrompt([])).toBe("");
+  });
+});
+
+describe("forcedSkillsForPrompt", () => {
+  it("inlines full instructions and a resource note", () => {
+    const withResource: SkillDefinition = {
+      ...baseSkill,
+      id: "user:with-resource",
+      resources: [{ name: "ref.md", content: "x" }],
+    };
+    const text = forcedSkillsForPrompt([withResource]);
+    expect(text).toContain(withResource.instructions);
+    expect(text).toContain("read_skill_resource");
+    expect(text).toContain(withResource.id);
+    expect(text).toContain("ref.md");
+  });
+
+  it("returns an empty string for no skills", () => {
+    expect(forcedSkillsForPrompt([])).toBe("");
   });
 });
 
