@@ -5,6 +5,10 @@ import type { GeneratedFile } from "./stream";
 export type Mode = "ask" | "plan" | "build";
 export type PlanStyle = "solo" | "roundtable";
 
+// A pill shown under a message for one tool call. `detail` is the full call
+// (arguments, code, or query) shown on hover, since `label` is deliberately short.
+export type ToolActivityEntry = { label: string; detail: string };
+
 export type Attachment = {
   id: string;
   name: string;
@@ -26,7 +30,7 @@ export type MessageVariant = {
   provider?: ProviderId;
   mode?: Mode;
   planState?: "proposed" | "approved" | "changes_requested";
-  toolActivity?: string[];
+  toolActivity?: ToolActivityEntry[];
   generatedFiles?: GeneratedFile[];
 };
 
@@ -47,7 +51,7 @@ export type Message = {
   planState?: "proposed" | "approved" | "changes_requested";
   variants?: MessageVariant[];
   variantIndex?: number;
-  toolActivity?: string[];
+  toolActivity?: ToolActivityEntry[];
   generatedFiles?: GeneratedFile[];
   roundtableRunId?: string;
   participantId?: string;

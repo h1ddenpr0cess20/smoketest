@@ -177,10 +177,14 @@ describe("tool activity extraction", () => {
           action: { queries: ["next.js 16", "webpack"] },
         },
       }),
-    ).toEqual({ id: "ws_1", label: "Web search: next.js 16, webpack" });
+    ).toEqual({
+      id: "ws_1",
+      label: "Web search: next.js 16, webpack",
+      detail: "next.js 16, webpack",
+    });
   });
 
-  it("labels MCP calls with the tool name", () => {
+  it("labels MCP calls with the tool name and full arguments in the detail", () => {
     expect(
       toolActivity({
         type: "response.output_item.done",
@@ -189,9 +193,14 @@ describe("tool activity extraction", () => {
           type: "mcp_call",
           name: "read_file",
           server_label: "workspace",
+          arguments: '{"path":"README.md"}',
         },
       }),
-    ).toEqual({ id: "mcp_1", label: "MCP · read_file" });
+    ).toEqual({
+      id: "mcp_1",
+      label: "MCP · read_file",
+      detail: 'workspace · read_file({\n  "path": "README.md"\n})',
+    });
   });
 
   it("ignores plain message items and other events", () => {
@@ -206,25 +215,38 @@ describe("tool activity extraction", () => {
     ).toBeNull();
   });
 
-  it("labels memory tool calls", () => {
+  it("labels memory tool calls and puts the raw arguments in the detail", () => {
     expect(
       toolActivity({
         type: "response.output_item.added",
-        item: { id: "fc_1", type: "function_call", name: "remember" },
+        item: {
+          id: "fc_1",
+          type: "function_call",
+          name: "remember",
+          arguments: '{"memory":"likes dogs"}',
+        },
       }),
-    ).toEqual({ id: "fc_1", label: "Remember" });
+    ).toEqual({
+      id: "fc_1",
+      label: "Remember",
+      detail: 'remember({\n  "memory": "likes dogs"\n})',
+    });
     expect(
       toolActivity({
         type: "response.output_item.added",
         item: { id: "fc_2", type: "function_call", name: "forget" },
       }),
-    ).toEqual({ id: "fc_2", label: "Forget" });
+    ).toEqual({ id: "fc_2", label: "Forget", detail: "forget()" });
     expect(
       toolActivity({
         type: "response.output_item.added",
         item: { id: "fc_3", type: "function_call", name: "other_tool" },
       }),
-    ).toEqual({ id: "fc_3", label: "Function: other_tool" });
+    ).toEqual({
+      id: "fc_3",
+      label: "Function: other_tool",
+      detail: "other_tool()",
+    });
   });
 
   it("labels skill tool calls", () => {
@@ -233,7 +255,11 @@ describe("tool activity extraction", () => {
         type: "response.output_item.added",
         item: { id: "fc_4", type: "function_call", name: "activate_skill" },
       }),
-    ).toEqual({ id: "fc_4", label: "Activate skill" });
+    ).toEqual({
+      id: "fc_4",
+      label: "Activate skill",
+      detail: "activate_skill()",
+    });
     expect(
       toolActivity({
         type: "response.output_item.added",
@@ -243,6 +269,10 @@ describe("tool activity extraction", () => {
           name: "read_skill_resource",
         },
       }),
-    ).toEqual({ id: "fc_5", label: "Read skill resource" });
+    ).toEqual({
+      id: "fc_5",
+      label: "Read skill resource",
+      detail: "read_skill_resource()",
+    });
   });
 });

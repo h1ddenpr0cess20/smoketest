@@ -21,6 +21,7 @@ export type ResponseStreamEvent = {
     action?: { query?: unknown; queries?: unknown; url?: unknown };
     call_id?: string;
     arguments?: string;
+    code?: string;
   };
 };
 
@@ -138,10 +139,24 @@ function searchQueryFromItem(
   return "";
 }
 
-export type ToolActivity = { id: string; label: string };
+export type ToolActivity = { id: string; label: string; detail: string };
+
+// Renders a function-style call for the hover preview, pretty-printing JSON
+// arguments when possible and falling back to the raw string otherwise.
+function formatCall(name: string, rawArguments: string | undefined): string {
+  const trimmed = (rawArguments || "").trim();
+  if (!trimmed || trimmed === "{}") return `${name}()`;
+  try {
+    return `${name}(${JSON.stringify(JSON.parse(trimmed), null, 2)})`;
+  } catch {
+    return `${name}(${trimmed})`;
+  }
+}
 
 // A human-readable label for a provider-managed tool call surfaced by an
-// output_item event, or null for events that aren't tool activity.
+// output_item event, or null for events that aren't tool activity. `detail`
+// carries the full call (arguments, code, or query) for a hover preview,
+// since the label alone is deliberately short.
 export function toolActivity(event: ResponseStreamEvent): ToolActivity | null {
   if (
     event.type !== "response.output_item.added" &&
@@ -154,17 +169,44 @@ export function toolActivity(event: ResponseStreamEvent): ToolActivity | null {
   const query = searchQueryFromItem(item);
   switch (item.type) {
     case "web_search_call":
-      return { id, label: query ? `Web search: ${query}` : "Web search" };
+      return {
+        id,
+        label: query ? `Web search: ${query}` : "Web search",
+        detail: query || "Web search",
+      };
     case "x_search_call":
-      return { id, label: query ? `X search: ${query}` : "X search" };
+      return {
+        id,
+        label: query ? `X search: ${query}` : "X search",
+        detail: query || "X search",
+      };
     case "code_interpreter_call":
-      return { id, label: "Code interpreter" };
+      return {
+        id,
+        label: "Code interpreter",
+        detail: item.code?.trim() || "Code interpreter",
+      };
     case "file_search_call":
-      return { id, label: query ? `File search: ${query}` : "File search" };
-    case "mcp_call":
-      return { id, label: `MCP · ${item.name || item.server_label || "tool"}` };
+      return {
+        id,
+        label: query ? `File search: ${query}` : "File search",
+        detail: query || "File search",
+      };
+    case "mcp_call": {
+      const tool = item.name || item.server_label || "tool";
+      const prefix = item.server_label ? `${item.server_label} · ` : "";
+      return {
+        id,
+        label: `MCP · ${tool}`,
+        detail: `${prefix}${formatCall(tool, item.arguments)}`,
+      };
+    }
     case "function_call":
-      return { id, label: functionCallLabel(item.name) };
+      return {
+        id,
+        label: functionCallLabel(item.name),
+        detail: formatCall(item.name || "call", item.arguments),
+      };
     default:
       return null;
   }
