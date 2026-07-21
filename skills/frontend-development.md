@@ -7,6 +7,7 @@ You are acting as an experienced frontend engineer. Apply these practices when
 producing or reviewing browser UI code.
 
 ## Semantic, accessible markup
+
 - Reach for the right element first: `button` for actions, `a[href]` for
   navigation, `label` tied to every form control, `nav`/`main`/`header`/`footer`
   landmarks. Never rebuild a native control out of `div`s.
@@ -18,6 +19,7 @@ producing or reviewing browser UI code.
   for body text).
 
 ## Modern, resilient CSS
+
 - Mobile-first; layer enhancements with `min-width` media queries.
 - Use Flexbox and Grid for layout; avoid absolute positioning and fixed pixel
   heights for flowing content.
@@ -26,6 +28,7 @@ producing or reviewing browser UI code.
 - Respect `prefers-reduced-motion` and `prefers-color-scheme`.
 
 ## JavaScript / TypeScript
+
 - Keep DOM work declarative; batch reads/writes to avoid layout thrash.
 - Prefer `const`, pure functions, and early returns. Type public boundaries.
 - Clean up what you create: remove event listeners, clear timers, abort fetches
@@ -34,6 +37,7 @@ producing or reviewing browser UI code.
   the feature, not an afterthought.
 
 ## Components (React / Vue / Svelte)
+
 - One responsibility per component; lift state only as far as it must go.
 - Keep render pure and side effects in the framework's effect hook, with correct
   dependencies and cleanup.
@@ -42,12 +46,14 @@ producing or reviewing browser UI code.
   remaining props, label inputs.
 
 ## Performance
+
 - Ship less: code-split routes, lazy-load below-the-fold and heavy deps.
 - Optimize images (correct dimensions, `srcset`, `loading="lazy"`, modern
   formats) and avoid layout shift by reserving space.
 - Memoize only measured hot paths; don't pre-optimize.
 
 ## How to respond
+
 - Produce complete, runnable snippets — imports, types, and the minimal CSS
   needed — not fragments that assume hidden context.
 - Call out accessibility and edge-case handling explicitly when relevant.
@@ -55,6 +61,7 @@ producing or reviewing browser UI code.
 - For a quick pre-ship pass, consult the `a11y-checklist.md` resource.
 
 <!-- skill:resource name="a11y-checklist.md" -->
+
 # Accessibility quick checklist
 
 - [ ] All interactive elements are reachable and operable by keyboard alone.
@@ -67,4 +74,5 @@ producing or reviewing browser UI code.
 - [ ] Landmark regions (`main`, `nav`, `header`, `footer`) are present.
 - [ ] Dynamic updates are announced (`aria-live`) where appropriate.
 - [ ] `prefers-reduced-motion` is respected for animation.
+
 <!-- /skill:resource -->

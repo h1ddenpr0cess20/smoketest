@@ -10,6 +10,7 @@ web_search, news_search, and fetch_url. None of this reaches the user's actual
 machine or this chat's own filesystem — it all happens inside that sandbox.
 
 ## Move like an agent with a token budget
+
 - Batch related steps into one execute_command call with `&&` instead of one
   call per command; every call is a full round trip you're paying for.
 - Read slices, not whole files: `sed -n '120,160p' file`, `rg -n -A3 pattern`,
@@ -25,12 +26,14 @@ machine or this chat's own filesystem — it all happens inside that sandbox.
   resource for the exact commands.
 
 ## Know your timeout before you start something long
+
 - shell_mcp defaults COMMAND_TIMEOUT to 30 seconds; docker_shell_mcp defaults
   to 1200 (20 minutes). A build or install that might outlast the timeout
   should run backgrounded (`nohup cmd > /tmp/log 2>&1 & echo $!`) and get
   polled afterward, not fired as one blocking call that gets cut off.
 
 ## Always hand back a real download link
+
 - When the task produces something worth keeping, archive it before you
   finish: `zip -rq /tmp/deliverable.zip . -x '.git/*' -x 'node_modules/*'`
   (or `tar czf` if zip is missing).
@@ -44,6 +47,7 @@ machine or this chat's own filesystem — it all happens inside that sandbox.
   download_file (SFTP) and give the user the local path instead.
 
 ## How to respond
+
 - Lead with what changed or what you found, not a transcript of every
   command you ran.
 - For the full bash reference — git archaeology, search, process/network
@@ -51,6 +55,7 @@ machine or this chat's own filesystem — it all happens inside that sandbox.
   resource.
 
 <!-- skill:resource name="shell-cheatsheet.md" -->
+
 # Shell MCP cheatsheet
 
 Commands to run via execute_command inside the sandbox. All paths are
@@ -59,6 +64,7 @@ tool might not be preinstalled (rg, jq, shellcheck), check first with
 `command -v <tool>` and fall back to the plain alternative shown alongside it.
 
 ## Orient in an unfamiliar sandbox
+
 - `pwd && whoami && uname -a`
 - `git rev-parse --is-inside-work-tree 2>/dev/null && git remote -v && git log --oneline -15 && git status`
 - `ls package.json pyproject.toml go.mod Cargo.toml Makefile Dockerfile requirements.txt 2>/dev/null`
@@ -67,6 +73,7 @@ tool might not be preinstalled (rg, jq, shellcheck), check first with
 - `env | sort` — see what's already configured before assuming it isn't
 
 ## Git: read history like a detective
+
 - `git log --oneline --graph --decorate -20` — shape of recent history at a glance
 - `git log -p -L 10,40:file` — history of one line range, not the whole file's log
 - `git log -S'needle' --oneline` — pickaxe: commits that added or removed an exact string (fastest way to answer "when did this appear")
@@ -89,6 +96,7 @@ tool might not be preinstalled (rg, jq, shellcheck), check first with
 - `git log --all --oneline -- path` — a file's history across every branch, not just the current one
 
 ## Search fast instead of reading everything
+
 - `command -v rg >/dev/null && rg -n "pattern" --hidden -g '!.git' || grep -rn "pattern" --exclude-dir=.git .`
 - `rg -l "pattern"` — just the file list, no content, when that's all you need
 - `rg --files -g '*.py'` — list files matching a glob without opening any
@@ -96,12 +104,14 @@ tool might not be preinstalled (rg, jq, shellcheck), check first with
 - `sed -n '120,160p' file` — read a line range instead of the whole file
 
 ## See the shape of a codebase
+
 - `du -sh */ 2>/dev/null | sort -h` — biggest directories first
 - `find . -iname '*test*' -not -path '*/node_modules/*'` — locate the test suite
 - `wc -l $(find . -name '*.py') | tail -1` — total line count for one language
 - `find . -type f -newer .git/HEAD -not -path '*/.git/*'` — files touched since the last commit
 
 ## Inspect processes, ports, and system state
+
 - `ps aux --sort=-%mem | head -15` — biggest processes by memory
 - `command -v ss >/dev/null && ss -tlnp || netstat -tlnp` — what's listening on which port
 - `lsof -i :3000` — what's bound to a specific port before you try to use it
@@ -111,6 +121,7 @@ tool might not be preinstalled (rg, jq, shellcheck), check first with
 - `which <cmd>` / `command -v <cmd>` — confirm a tool exists before scripting around it
 
 ## Look up library/package details without a browser
+
 - Node: `npm view <pkg>` · `npm view <pkg> versions --json` · `npm view <pkg> dependencies` · `cat node_modules/<pkg>/package.json`
 - Python: `pip show <pkg>` · `pip index versions <pkg>` · `python3 -c "import <pkg>; print(<pkg>.__version__, <pkg>.__file__)"`
 - Go: `go doc <pkg>` · `go list -m -versions <pkg>`
@@ -120,6 +131,7 @@ tool might not be preinstalled (rg, jq, shellcheck), check first with
 - On webshell_mcp: call `web_search` or `fetch_url` directly for docs pages, changelogs, or GitHub issues instead of a registry API round trip
 
 ## Process JSON, logs, and tabular output
+
 - `command -v jq >/dev/null && cat file.json | jq '.key'` — pull one field instead of dumping the whole payload; falls back to `python3 -m json.tool` if jq is missing
 - `curl -s URL | jq -r '.[].name'` — combine a fetch with extraction in one call
 - `sort | uniq -c | sort -rn` — frequency count, e.g. `grep ERROR app.log | sort | uniq -c | sort -rn | head` for the most common error
@@ -128,6 +140,7 @@ tool might not be preinstalled (rg, jq, shellcheck), check first with
 - `tail -f log & sleep 5; kill %1` — sample a live log briefly instead of tailing forever
 
 ## Probe the network and APIs
+
 - `curl -sS -i URL` — headers and body together, one call
 - `curl -sS -o /dev/null -w '%{http_code}\n' URL` — just the status code, to confirm something is up
 - `curl -sS -X POST -H 'Content-Type: application/json' -d '{"key":"value"}' URL` — quick API probe
@@ -135,24 +148,29 @@ tool might not be preinstalled (rg, jq, shellcheck), check first with
 - `getent hosts <hostname>` / `dig <hostname> +short` — DNS resolution check
 
 ## Quick language-specific sanity checks
+
 - Python: `python3 -m py_compile file.py` — syntax check without running it; `python3 -m venv .venv && source .venv/bin/activate` for an isolated env
 - Node: `node --check file.js` — syntax check without running; `npx tsc --noEmit` for a fast typecheck; `npm ls --depth=0` for top-level deps only
 - Shell: `bash -n script.sh` — syntax check; `command -v shellcheck >/dev/null && shellcheck script.sh` if available
 - Any: run one test at a time while iterating (`pytest path::test_name -x`, `npx vitest run path/to/file.test.ts`, `go test ./pkg/ -run TestName`) instead of the full suite, then run the full suite once at the end
 
 ## Edit without burning the whole file through the wire
+
 - `sed -i 's/old/new/g' file` for simple substitutions, then `git diff` to confirm
 - A short `python3 -c "..."` one-liner for anything sed can't express cleanly
 - write_file/read_file tools for a full rewrite; sed/python for a small patch
 - `chmod +x script.sh` after writing anything meant to run directly
 
 ## Long-running commands
+
 - Check the cost first: `time <cmd>`
 - Background anything that might outlast the timeout: `nohup cmd > /tmp/log 2>&1 & echo $!`, then `tail -n 40 /tmp/log` or `ps -p <pid>` to poll it
 
 ## Package and serve the result
+
 - `zip -rq /tmp/deliverable.zip . -x '.git/*' -x 'node_modules/*' -x '__pycache__/*'`
 - `tar czf /tmp/deliverable.tar.gz --exclude=.git --exclude=node_modules .` if zip isn't installed
 - `unzip -l /tmp/deliverable.zip | tail -5`, or `tar tzf /tmp/deliverable.tar.gz | wc -l`, to confirm it's non-empty before calling fetch_file
 - Then call `fetch_file` on the archive path and hand the returned URL straight to the user
+
 <!-- /skill:resource -->
