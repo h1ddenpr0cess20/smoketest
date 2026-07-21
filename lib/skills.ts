@@ -263,10 +263,14 @@ export function forcedSkillsForPrompt(skills: SkillDefinition[]): string {
 
 export type SkillToolResult = { output: string };
 
+// Tracks which skills have already been activated in the current run so that a
+// repeated activate_skill call returns a short acknowledgement instead of
+// re-emitting the full instructions. Pass the same Set across a tool loop.
 export function runSkillToolCall(
   name: string,
   rawArguments: string,
   skills: SkillDefinition[],
+  activated?: Set<string>,
 ): SkillToolResult {
   let args: Record<string, unknown> = {};
   try {
@@ -294,6 +298,18 @@ export function runSkillToolCall(
         }),
       };
     }
+    if (activated?.has(skill.id)) {
+      return {
+        output: JSON.stringify({
+          ok: true,
+          id: skill.id,
+          name: skill.name,
+          already_active: true,
+          message: `Skill "${skill.name}" is already active; follow the instructions provided when it was first activated.`,
+        }),
+      };
+    }
+    activated?.add(skill.id);
     return {
       output: JSON.stringify({
         ok: true,

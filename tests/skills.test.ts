@@ -333,6 +333,50 @@ describe("runSkillToolCall", () => {
     });
   });
 
+  it("returns a short acknowledgement when a skill is already active", () => {
+    const activated = new Set<string>();
+    const first = runSkillToolCall(
+      "activate_skill",
+      JSON.stringify({ skill_id: resourceSkill.id }),
+      [resourceSkill],
+      activated,
+    );
+    expect(JSON.parse(first.output)).toEqual({
+      ok: true,
+      id: resourceSkill.id,
+      name: resourceSkill.name,
+      instructions: resourceSkill.instructions,
+      resources: ["ref.md"],
+    });
+
+    const second = runSkillToolCall(
+      "activate_skill",
+      JSON.stringify({ skill_id: resourceSkill.id }),
+      [resourceSkill],
+      activated,
+    );
+    const parsed = JSON.parse(second.output);
+    expect(parsed).toEqual({
+      ok: true,
+      id: resourceSkill.id,
+      name: resourceSkill.name,
+      already_active: true,
+      message: `Skill "${resourceSkill.name}" is already active; follow the instructions provided when it was first activated.`,
+    });
+    expect(parsed.instructions).toBeUndefined();
+  });
+
+  it("still returns full instructions without an activated set", () => {
+    const result = runSkillToolCall(
+      "activate_skill",
+      JSON.stringify({ skill_id: resourceSkill.id }),
+      [resourceSkill],
+    );
+    expect(JSON.parse(result.output).instructions).toBe(
+      resourceSkill.instructions,
+    );
+  });
+
   it("reports failure when activate_skill gets an unknown id", () => {
     const result = runSkillToolCall(
       "activate_skill",
