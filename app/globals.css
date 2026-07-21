@@ -1126,6 +1126,7 @@ body.desktop-app .topbar button {
   border-radius: 7px;
   padding: 5px 9px;
   font: 9.5px var(--font-mono);
+  cursor: help;
 }
 
 .generated-files {

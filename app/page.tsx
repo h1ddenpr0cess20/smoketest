@@ -43,6 +43,7 @@ import type {
   PlanStyle,
   ProviderSettings,
   Thread,
+  ToolActivityEntry,
 } from "@/lib/types";
 import type {
   RoundtableConfig,
@@ -688,7 +689,7 @@ type StreamPayload = {
 type StreamOutcome = {
   text: string;
   error?: string;
-  toolActivity: string[];
+  toolActivity: ToolActivityEntry[];
   generatedFiles: GeneratedFile[];
 };
 type TurnOutcome = StreamOutcome & { functionCalls: FunctionCallRequest[] };
@@ -732,7 +733,7 @@ type RoundtableRuntime = {
 async function runResponsesTurn(
   payload: StreamPayload,
   signal: AbortSignal,
-  onUpdate: (text: string, toolActivity: string[]) => void,
+  onUpdate: (text: string, toolActivity: ToolActivityEntry[]) => void,
 ): Promise<TurnOutcome> {
   let streamed = "";
   let lastFlush = 0;
@@ -742,7 +743,7 @@ async function runResponsesTurn(
   let lastTextItemId = "";
   // Keyed by item id so a tool call's label upgrades in place when the query
   // arrives on output_item.done instead of duplicating the entry.
-  const activities = new Map<string, string>();
+  const activities = new Map<string, ToolActivityEntry>();
   const activityList = () => [...activities.values()];
   const files = new Map<string, GeneratedFile>();
   const fileList = () => [...files.values()];
@@ -826,7 +827,10 @@ async function runResponsesTurn(
       if (reason) truncatedReason = reason;
       const activity = toolActivity(event);
       if (activity) {
-        activities.set(activity.id, activity.label);
+        activities.set(activity.id, {
+          label: activity.label,
+          detail: activity.detail,
+        });
         push(true);
       }
       const call = functionCallFromEvent(event);
@@ -884,13 +888,13 @@ async function runResponsesTurn(
 async function streamAssistant(
   payload: StreamPayload,
   signal: AbortSignal,
-  onUpdate: (text: string, toolActivity: string[]) => void,
+  onUpdate: (text: string, toolActivity: ToolActivityEntry[]) => void,
   memoryCtx?: MemoryToolContext,
   skillCtx?: SkillToolContext,
 ): Promise<StreamOutcome> {
   let workingInput = payload.input;
   let priorText = "";
-  const activityLog: string[] = [];
+  const activityLog: ToolActivityEntry[] = [];
   const fileList: GeneratedFile[] = [];
 
   for (let turn = 0; turn < MAX_TOOL_LOOP_TURNS; turn++) {
@@ -1379,8 +1383,13 @@ const MessageView = memo(function MessageView({
         ) : null}
         {message.toolActivity?.length ? (
           <div className="tool-activity" aria-label="Tool activity">
-            {message.toolActivity.map((label, index) => (
-              <span key={`${index}-${label}`}>⚙ {label}</span>
+            {message.toolActivity.map((activity, index) => (
+              <span
+                key={`${index}-${activity.label}`}
+                title={activity.detail || activity.label}
+              >
+                ⚙ {activity.label}
+              </span>
             ))}
           </div>
         ) : null}
@@ -3258,7 +3267,7 @@ export default function Home() {
         inlineAttachments,
         provider,
       );
-      let ragLabels: string[] = [];
+      let ragLabels: ToolActivityEntry[] = [];
       if (currentProvider.local && currentSettings.localRag) {
         const embeddingModel = resolveEmbeddingModel(
           currentSettings.embeddingModel,
@@ -3348,8 +3357,15 @@ export default function Home() {
                   [],
                   provider,
                 );
+                const snippetLines = retrieved.map(
+                  (chunk) =>
+                    `- ${chunk.name}: "${chunk.text.slice(0, 100).trim()}${chunk.text.length > 100 ? "…" : ""}"`,
+                );
                 ragLabels = [
-                  `Local RAG: ${retrieved.length} chunks · ${names.length} file${names.length === 1 ? "" : "s"}`,
+                  {
+                    label: `Local RAG: ${retrieved.length} chunks · ${names.length} file${names.length === 1 ? "" : "s"}`,
+                    detail: `Retrieved from: ${names.join(", ")}\n${snippetLines.join("\n")}`,
+                  },
                 ];
               }
             }
@@ -3363,9 +3379,8 @@ export default function Home() {
             }
             // Retrieval is best-effort; the inline-attachment input stands.
             // Failures surface as a label instead of vanishing silently.
-            ragLabels = [
-              `Local RAG failed (${error instanceof Error ? error.message : "retrieval error"}) — sent inline file text instead`,
-            ];
+            const failureLabel = `Local RAG failed (${error instanceof Error ? error.message : "retrieval error"}) — sent inline file text instead`;
+            ragLabels = [{ label: failureLabel, detail: failureLabel }];
           }
         }
       }
