@@ -15,11 +15,23 @@ describe("probeMcpServer", () => {
     await expect(probeMcpServer("https://mcp.example.com")).resolves.toBe(true);
   });
 
-  it("resolves false when fetch rejects", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+  it("resolves false when fetch rejects with a connection failure", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new TypeError("fetch failed"),
+    );
     await expect(probeMcpServer("https://mcp.example.com")).resolves.toBe(
       false,
     );
+  });
+
+  it("resolves true when the probe times out, since the server may just be slow", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new DOMException(
+        "The operation was aborted due to timeout",
+        "TimeoutError",
+      ),
+    );
+    await expect(probeMcpServer("https://mcp.example.com")).resolves.toBe(true);
   });
 });
 
