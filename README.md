@@ -59,7 +59,7 @@ Roundtable planning, where several model participants plan a change together:
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/h1ddenpr0cess20/smoketest/blob/master/colab/smoketest_colab.ipynb)
 
-[`colab/smoketest_colab.ipynb`](colab/smoketest_colab.ipynb) builds smoketest in a Colab VM, launches it as a production server, and exposes it through a temporary public URL (a Cloudflare quick tunnel) — no local setup required. It also installs LM Studio and, optionally, Ollama in the same VM so those local providers work through the tunnel too, and can download **google/gemma-4-26b-a4b-qat** for LM Studio. Read the notebook's caveats before use: it's a public, ephemeral link, and only LM Studio/Ollama running in that same VM are reachable — not local providers on your own machine.
+[`colab/smoketest_colab.ipynb`](colab/smoketest_colab.ipynb) builds smoketest in a Colab VM, launches it as a production server, and embeds it right in the notebook via Colab's own authenticated port-proxying — no local setup, no public link needed. An optional step also opens a temporary public URL (a Cloudflare quick tunnel) for access from another device. It installs LM Studio and, optionally, Ollama in the same VM so those local providers work too, and can download **google/gemma-4-12b-qat** for LM Studio. Read the notebook's caveats before use: only LM Studio/Ollama running in that same VM are reachable — not local providers on your own machine — and the optional tunnel link is public and ephemeral.
 
 ## Run locally
 
