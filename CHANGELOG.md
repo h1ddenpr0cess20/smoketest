@@ -4,6 +4,21 @@ All notable changes to smoketest will be documented in this file.
 
 ## Unreleased
 
+## [1.1.0] - 2026-07-21
+
+### Added
+
+- An MCP Shell Coding Agent example skill, plus a Colab notebook for running smoketest against LM Studio and Ollama.
+- Manual skill loading and unloading, with a Loaded badge for force-loaded skills.
+- Full tool call details on hover for tool-activity pills.
+
+### Fixed
+
+- MCP servers are no longer marked offline on a probe timeout.
+- Replaced the blinking-cursor streaming indicator with the shared dots spinner.
+- Prevented reloading a skill that is already active.
+- Overrode the transitive `sharp` dependency to a patched version to fix the CI audit.
+
 ## [1.0.0] - 2026-07-19
 
 First stable release. Basic happy-path testing indicates that the implemented features work as intended, but the full provider, model, browser, and deployment matrix has not been exhaustively tested.
