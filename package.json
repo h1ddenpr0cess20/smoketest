@@ -31,10 +31,10 @@
     "electron:dist:mac": "npm run build:electron && electron-builder --mac --x64 --arm64 --publish never"
   },
   "dependencies": {
-    "marked": "^18.0.6",
-    "next": "^16.2.10",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
+    "marked": "^18.0.7",
+    "next": "^16.2.11",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1"
