@@ -46,12 +46,12 @@
     "@vitest/coverage-v8": "4.1.10",
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3",
-    "eslint": "^10.8.0",
+    "eslint": "^9.39.5",
     "eslint-config-next": "16.3.0",
     "eslint-config-prettier": "10.1.8",
     "prettier": "3.9.6",
     "raw-loader": "^4.0.2",
-    "typescript": "^7.0.2",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   },
   "overrides": {
