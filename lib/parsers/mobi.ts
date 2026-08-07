@@ -155,6 +155,11 @@ export function extractMobiText(arrayBuffer: ArrayBuffer): string {
 
   const raw = parts.join("");
 
+  // parseFromString builds an inert document: no scripts run, no subresources
+  // load, and nothing here is ever attached to the live DOM — only textContent
+  // is read back out. The ebook markup is untrusted, which is exactly why it is
+  // parsed inertly instead of being assigned to innerHTML.
+  // codeql[js/xss-through-dom]
   const dom = new DOMParser().parseFromString(raw, "text/html");
   dom.querySelectorAll("script, style").forEach((el) => el.remove());
   const text = (dom.body?.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
