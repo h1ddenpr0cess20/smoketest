@@ -2400,6 +2400,9 @@ export default function Home() {
               : "Indexing failed.",
         });
       } finally {
+        // Identity comparison against the stored promise, not a value read:
+        // only clear the ref if a newer indexing run has not replaced it.
+        // codeql[js/missing-await]
         if (indexingRef.current === operation) indexingRef.current = null;
       }
     }
