@@ -9,6 +9,15 @@ updates:
         dependency-type: development
       npm-production:
         dependency-type: production
+    ignore:
+      # eslint-config-next 16.3.0 bundles eslint-plugin-react, which still calls
+      # the context.getFilename() API that eslint 10 removed.
+      - dependency-name: eslint
+        update-types: [version-update:semver-major]
+      # typescript-eslint does not support the TypeScript 7 API yet.
+      # See https://github.com/typescript-eslint/typescript-eslint/issues/10940
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: github-actions
     directory: /

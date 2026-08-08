@@ -31,7 +31,7 @@
     "electron:dist:mac": "npm run build:electron && electron-builder --mac --x64 --arm64 --publish never"
   },
   "dependencies": {
-    "marked": "^18.0.7",
+    "marked": "^18.0.9",
     "next": "^16.3.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
@@ -44,7 +44,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitest/coverage-v8": "4.1.10",
-    "electron": "^43.2.0",
+    "electron": "^43.3.0",
     "electron-builder": "^26.15.3",
     "eslint": "^9.39.5",
     "eslint-config-next": "16.3.0",
@@ -56,7 +56,7 @@
   },
   "overrides": {
     "next": {
-      "postcss": "^8.5.10"
+      "postcss": "^8.5.23"
     },
     "sharp": "^0.35.3"
   },
